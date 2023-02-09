@@ -29,6 +29,7 @@
 #include <tvm/target/codegen.h>
 
 #include <algorithm>
+#include <map>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -37,10 +38,39 @@
 #include "../../support/str_escape.h"
 #include "../build_common.h"
 #include "../func_registry_generator.h"
+#include "codegen_c_riscv.h"
 #include "codegen_params.h"
 
 namespace tvm {
 namespace codegen {
+
+std::vector<std::string> split_str(std::string str, std::string pattern) {
+  std::string::size_type pos;
+  std::vector<std::string> result;
+  // extend str for process
+  str += pattern;
+  size_t size = str.size();
+  for (size_t i = 0; i < size; i++) {
+    pos = str.find(pattern, i);
+    if (pos < size) {
+      std::string s = str.substr(i, pos - i);
+      if (s.size() > 0) result.push_back(s);
+      i = pos + pattern.size() - 1;
+    }
+  }
+  return result;
+}
+
+std::map<std::string, std::string> get_target_map(std::string str) {
+  std::map<std::string, std::string> result;
+  auto s = split_str(str, " ");
+  for (uint i = 1; i < s.size(); i++) {
+    std::string r = s[i].substr(1);
+    auto t = split_str(r, "=");
+    result[t[0]] = t[1];
+  }
+  return result;
+}
 
 CodeGenCHost::CodeGenCHost() { module_name_ = GetUniqueName("__tvm_module_ctx"); }
 
@@ -388,6 +418,16 @@ inline void CodeGenCHost::PrintTernaryCondExpr(const T* op, const char* compare,
 
 runtime::Module BuildCHost(IRModule mod, Target target) {
   using tvm::runtime::Registry;
+  auto target_str = target->str();
+  auto target_map = get_target_map(target_str);
+
+  if (target_map["device"] == "rvv") {
+    std::string build_f_name = "target.build.riscv";
+    const PackedFunc* bf = runtime::Registry::Get(build_f_name);
+    ICHECK(bf != nullptr) << build_f_name << " is not enabled";
+    return (*bf)(mod, target);
+  }
+
   bool output_ssa = false;
   bool emit_asserts = false;
 

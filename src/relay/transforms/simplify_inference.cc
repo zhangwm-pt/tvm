@@ -195,8 +195,11 @@ class InferenceSimplifier : public MixedModeMutator {
     }
     if (const auto* call = new_n->tuple.as<CallNode>()) {
       if (call->op == batch_norm_op_) {
-        return BatchNormToInferUnpack(call->attrs, call->args[0], call->args[1], call->args[2],
-                                      call->args[3], call->args[4], ty_map_.at(call->args[0]));
+        auto new_node =
+            BatchNormToInferUnpack(call->attrs, call->args[0], call->args[1], call->args[2],
+                                   call->args[3], call->args[4], ty_map_.at(call->args[0]));
+        new_node->span = call->span;
+        return new_node;
       } else if (call->op == dropout_op_) {
         return call->args[0];
       }

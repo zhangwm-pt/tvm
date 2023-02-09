@@ -1,5 +1,6 @@
 # subdirectories
 3rdparty
+thead
 .github
 
 # Binary or data files
@@ -19,6 +20,7 @@
 .*\.log
 .*\.interp
 .*\.tokens
+.*\.tensor
 
 # microTVM test data files
 testdata
@@ -52,6 +54,11 @@ MANIFEST
 rat-excludes
 Cargo.lock
 
+.*\.prototxt
+.*\.caffemodel
+
+.*\.tp
+
 # Included template files
 Build.groovy.j2
 Deploy.groovy.j2
@@ -59,3 +66,4 @@ DockerBuild.groovy.j2
 Lint.groovy.j2
 Prepare.groovy.j2
 Test.groovy.j2
+

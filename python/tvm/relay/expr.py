@@ -173,8 +173,8 @@ class Constant(ExprWithOp):
         The data content of the constant expression.
     """
 
-    def __init__(self, data):
-        self.__init_handle_by_constructor__(_ffi_api.Constant, data)
+    def __init__(self, data, span=None):
+        self.__init_handle_by_constructor__(_ffi_api.Constant, data, span)
 
 
 @tvm._ffi.register_object("relay.Tuple")
@@ -316,10 +316,13 @@ class TupleGetItem(ExprWithOp):
 
     index: int
         The index.
+
+    span: Optional[tvm.relay.Span]
+        Span that points to original source code
     """
 
-    def __init__(self, tuple_value, index):
-        self.__init_handle_by_constructor__(_ffi_api.TupleGetItem, tuple_value, index)
+    def __init__(self, tuple_value, index, span=None):
+        self.__init_handle_by_constructor__(_ffi_api.TupleGetItem, tuple_value, index, span)
 
 
 @tvm._ffi.register_object("relay.RefCreate")
@@ -479,7 +482,7 @@ def var(name_hint, type_annotation=None, shape=None, dtype="float32"):
     return Var(name_hint, type_annotation)
 
 
-def const(value, dtype=None):
+def const(value, dtype=None, span=None):
     """Create a constant value.
 
     Parameters
@@ -516,7 +519,7 @@ def const(value, dtype=None):
     if not isinstance(value, _nd.NDArray):
         raise ValueError("value has to be scalar or NDArray")
 
-    return Constant(value)
+    return Constant(value, span)
 
 
 def bind(expr, binds):

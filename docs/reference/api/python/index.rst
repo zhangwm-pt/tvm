@@ -48,3 +48,4 @@ Python API
    graph_executor
    topi
    vta/index
+   hhb

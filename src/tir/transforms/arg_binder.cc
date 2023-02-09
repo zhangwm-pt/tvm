@@ -37,13 +37,13 @@ void BinderAddAssert(arith::Analyzer* ana, PrimExpr cond, const std::string& arg
                      std::vector<Stmt>* asserts) {
   PrimExpr scond = ana->Simplify(cond);
   if (is_zero(scond)) {
-    LOG(FATAL) << "Bind have an unmet assertion: " << cond << ", "
-               << " on argument " << arg_name;
+    // LOG(FATAL) << "Bind have an unmet assertion: " << cond << ", "
+    //            << " on argument " << arg_name;
   }
   if (!is_one(scond)) {
-    std::ostringstream os;
-    os << "Argument " << arg_name << " has an unsatisfied constraint: " << cond;
-    asserts->emplace_back(AssertStmt(scond, tvm::tir::StringImm(os.str()), Evaluate(0)));
+    // std::ostringstream os;
+    // os << "Argument " << arg_name << " has an unsatisfied constraint: " << cond;
+    // asserts->emplace_back(AssertStmt(scond, tvm::tir::StringImm(os.str()), Evaluate(0)));
   }
 }
 

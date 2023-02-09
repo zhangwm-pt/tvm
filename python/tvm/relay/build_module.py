@@ -428,10 +428,11 @@ def build(
 
     # If current dispatch context is fallback context (the default root context),
     # then load pre-tuned parameters from TopHub
-    if isinstance(autotvm.DispatchContext.current, autotvm.FallbackContext):
-        tophub_context = autotvm.tophub.context(list(raw_targets))
-    else:
-        tophub_context = autotvm.utils.EmptyContext()
+
+    # if isinstance(autotvm.DispatchContext.current, autotvm.FallbackContext):
+    #     tophub_context = autotvm.tophub.context(list(raw_targets))
+    # else:
+    tophub_context = autotvm.utils.EmptyContext()
 
     with tophub_context:
         bld_mod = BuildModule()
@@ -523,10 +524,11 @@ def optimize(mod, target=None, params=None):
 
     # If current dispatch context is fallback context (the default root context),
     # then load pre-tuned parameters from TopHub
-    if isinstance(autotvm.DispatchContext.current, autotvm.FallbackContext):
-        tophub_context = autotvm.tophub.context(raw_targets)
-    else:
-        tophub_context = autotvm.utils.EmptyContext()
+
+    # if isinstance(autotvm.DispatchContext.current, autotvm.FallbackContext):
+    #     tophub_context = autotvm.tophub.context(raw_targets)
+    # else:
+    tophub_context = autotvm.utils.EmptyContext()
 
     with tophub_context:
         bld_mod = BuildModule()

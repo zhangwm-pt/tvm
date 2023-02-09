@@ -145,6 +145,7 @@ class NDArray : public ObjectRef {
    * \return A DLManagedTensor
    */
   TVM_DLL DLManagedTensor* ToDLPack() const;
+
   /*!
    * \brief Create an empty NDArray.
    * \param shape The shape of the new array.
@@ -196,6 +197,7 @@ class NDArray : public ObjectRef {
                                  TVMStreamHandle stream = nullptr);
 
   TVM_DLL ShapeTuple Shape() const;
+  TVM_DLL int64_t Length() const;
   TVM_DLL runtime::DataType DataType() const;
   /*!
    * \brief Check conditions for construction NDArray over DLTensor without copying.

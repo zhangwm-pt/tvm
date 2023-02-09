@@ -14,6 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+# pylint: disable=invalid-name, unused-argument, too-many-lines, import-outside-toplevel
+# pylint: disable=unused-variable
 """Target data structure."""
 import json
 import re
@@ -56,6 +58,7 @@ class Target(Object):
     - :py:func:`tvm.target.rocm` create ROCM target
     - :py:func:`tvm.target.mali` create Mali target
     - :py:func:`tvm.target.intel_graphics` create Intel Graphics target
+    - :py:func:`tvm.target.csky_cpu` create CSKY target
     """
 
     def __init__(self, target, host=None):
@@ -419,7 +422,7 @@ def intel_graphics(model="unknown", options=None):
     """
     opts = ["-device=intel_graphics", "-model=%s" % model, "-thread_warp_size=16"]
     opts = _merge_opts(opts, options)
-    return Target(" ".join(["opencl"] + opts))
+    return _ffi_api.TargetCreate("opencl", *opts)
 
 
 MICRO_SUPPORTED_MODELS = {
@@ -600,7 +603,7 @@ def riscv_cpu(model="sifive-u54", options=None):
     }
     pre_defined_opt = trans_table.get(model, ["-model=%s" % model])
 
-    opts = ["-device=arm_cpu"] + pre_defined_opt
+    opts = ["-device=riscv_cpu"] + pre_defined_opt
     opts = _merge_opts(opts, options)
     return Target(" ".join(["llvm"] + opts))
 

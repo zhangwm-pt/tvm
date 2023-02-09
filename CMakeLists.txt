@@ -94,6 +94,7 @@ tvm_option(USE_MIOPEN "Build with ROCM:MIOpen" OFF)
 tvm_option(USE_ROCBLAS "Build with ROCM:RoCBLAS" OFF)
 tvm_option(USE_SORT "Build with sort support" ON)
 tvm_option(USE_NNPACK "Build with nnpack support" OFF)
+tvm_option(USE_CSINN "Build with csinn support" OFF)
 tvm_option(USE_LIBTORCH "Build with libtorch support" OFF)
 tvm_option(USE_RANDOM "Build with random support" ON)
 tvm_option(USE_MICRO_STANDALONE_RUNTIME "Build with micro.standalone_runtime support" OFF)
@@ -482,6 +483,7 @@ include(cmake/modules/contrib/Posit.cmake)
 include(cmake/modules/contrib/MicroStandaloneRuntime.cmake)
 include(cmake/modules/contrib/Sort.cmake)
 include(cmake/modules/contrib/NNPack.cmake)
+include(cmake/modules/contrib/CSINN.cmake)
 include(cmake/modules/contrib/LibTorch.cmake)
 include(cmake/modules/contrib/HybridDump.cmake)
 include(cmake/modules/contrib/TFLite.cmake)
@@ -630,6 +632,7 @@ set(CRC16_INCLUDE_PATH "3rdparty/libcrc/include")
 target_include_directorieS(
   tvm_objs
   PRIVATE "${CRC16_INCLUDE_PATH}")
+
 target_include_directorieS(
   tvm_libinfo_objs
   PRIVATE "${CRC16_INCLUDE_PATH}")

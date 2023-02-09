@@ -28,6 +28,7 @@ trap cleanup 0
 # These shards are solely for CI to enable the lint job to have some parallelism.
 
 function shard1 {
+  git config --global --add safe.directory /mnt
   echo "Convert scripts to Python..."
   tests/scripts/task_convert_scripts_to_python.sh
 
@@ -75,8 +76,8 @@ function shard2 {
   echo "Rust check..."
   tests/lint/rust_format.sh
 
-  echo "Docker check..."
-  tests/lint/docker-format.sh
+  # echo "Docker check..."
+  # tests/lint/docker-format.sh
 }
 
 

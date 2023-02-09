@@ -25,22 +25,29 @@ import os
 os.environ["GLOG_minloglevel"] = "2"
 import sys
 import logging
+import shutil
 
 logging.basicConfig(level=logging.ERROR)
 
 import numpy as np
 from google.protobuf import text_format
-import caffe
-from caffe import layers as L, params as P
-from caffe.proto import caffe_pb2 as pb
+
+try:
+    import caffe
+
+    # from caffe.proto import caffe_pb2 as pb
+    from caffe import layers as L, params as P
+    from caffe.proto import caffe_pb2 as pb
+except ImportError:
+    print("There is no Caffe found at current python environment.")
 
 import tvm
-import tvm.testing
 from tvm import relay
 from tvm.contrib import utils, graph_executor
 from tvm.contrib.download import download_testdata
 
-CURRENT_DIR = os.path.join(os.path.expanduser("~"), ".tvm_test_data", "caffe_test")
+CURRENT_DIR = "test_data"
+AiBench_DIR = "/lhome/toolsbuild/slave3/workspace/TVM/update_Model/ai-bench"
 
 #######################################################################
 # Generic functions for TVM & Caffe
@@ -58,6 +65,21 @@ def _list_to_str(ll):
     if isinstance(ll, (tuple, list)):
         tmp = [str(i) for i in ll]
         return "_".join(tmp)
+
+
+def get_input_info_from_relay(mod, params):
+    """Get input info from relay ir"""
+    input_name_list = []
+    input_shape_list = []
+    input_dtype_list = []
+
+    for arg in mod["main"].params:
+        if (not params) or arg.name_hint not in params.keys():
+            input_name_list.append(str(arg.name_hint))
+            input_shape_list.append(list(map(int, arg.checked_type.shape)))
+            input_dtype_list.append(str(arg.checked_type.dtype))
+
+    return input_name_list, input_shape_list, input_dtype_list
 
 
 def _gen_filename_str(op_name, data_shape, *args, **kwargs):
@@ -197,7 +219,9 @@ def _run_tvm(data, proto_file, blob_file):
         shape_dict = {"data": data.shape}
         dtype_dict = {"data": "float32"}
 
-    mod, params = relay.frontend.from_caffe(init_net, predict_net, shape_dict, dtype_dict)
+    mod, params, _ = relay.frontend.from_caffe(init_net, predict_net, shape_dict, dtype_dict)
+
+    in_name_list, in_shape_list, _ = get_input_info_from_relay(mod, params)
 
     target = "llvm"
 
@@ -207,8 +231,11 @@ def _run_tvm(data, proto_file, blob_file):
     dtype = "float32"
     m = graph_executor.GraphModule(lib["default"](dev))
     if isinstance(data, (tuple, list)):
-        for idx, d in enumerate(data):
-            m.set_input("data" + str(idx), tvm.nd.array(d.astype(dtype)))
+        for idx, in_name in enumerate(in_name_list):
+            if list(data[idx].shape) == list(in_shape_list[idx]):
+                m.set_input(in_name, tvm.nd.array(data[idx].astype(dtype)))
+        # for idx, d in enumerate(data):
+        #     m.set_input("data" + str(idx), tvm.nd.array(d.astype(dtype)))
     else:
         m.set_input("data", tvm.nd.array(data.astype(dtype)))
     # execute
@@ -452,35 +479,6 @@ def test_forward_Deconvolution():
             bias_filler=dict(type="xavier"),
         ),
     )
-    _test_deconvolution(
-        data,
-        convolution_param=dict(
-            num_output=16,
-            bias_term=False,
-            pad=0,
-            kernel_size=2,
-            stride=2,
-            dilation=1,
-            group=16,
-            weight_filler=dict(type="xavier"),
-            bias_filler=dict(type="xavier"),
-        ),
-    )
-    data = np.random.rand(1, 100, 32, 32).astype(np.float32)
-    _test_deconvolution(
-        data,
-        convolution_param=dict(
-            num_output=100,
-            bias_term=False,
-            pad=0,
-            kernel_size=2,
-            stride=2,
-            dilation=1,
-            group=100,
-            weight_filler=dict(type="xavier"),
-            bias_filler=dict(type="xavier"),
-        ),
-    )
 
 
 #######################################################################
@@ -540,45 +538,6 @@ def test_forward_Eltwise():
         ],
         operation=1,
         coeff=[0.5, 1],
-    )
-    _test_eltwise(
-        [
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-        ],
-        operation=0,
-    )
-    _test_eltwise(
-        [
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-        ],
-        operation=1,
-    )
-    _test_eltwise(
-        [
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-        ],
-        operation=2,
-    )
-    _test_eltwise(
-        [
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-            np.random.rand(1, 3, 10, 11).astype(np.float32),
-        ],
-        operation=1,
-        coeff=[0.5, 1, 0.2, 1.8, 3.1, 0.1],
     )
 
 
@@ -655,27 +614,6 @@ def test_forward_LRN():
 
 
 #######################################################################
-# Permute
-# -------
-
-
-def _test_permute(data, **kwargs):
-    """One iteration of Permute."""
-    _test_op(data, L.Permute, "Permute", **kwargs)
-
-
-def test_forward_Permute():
-    """Permute"""
-    data = np.random.rand(2, 3, 4).astype(np.float32)
-    _test_permute(data, permute_param={"order": [0, 1, 2]})
-    _test_permute(data, permute_param={"order": [0, 2, 1]})
-    _test_permute(data, permute_param={"order": [1, 0, 2]})
-    _test_permute(data, permute_param={"order": [1, 2, 0]})
-    _test_permute(data, permute_param={"order": [2, 0, 1]})
-    _test_permute(data, permute_param={"order": [2, 1, 0]})
-
-
-#######################################################################
 # Pooling
 # -----------
 
@@ -701,25 +639,6 @@ def test_forward_Pooling():
         data, kernel_h=2, kernel_w=3, stride_h=2, stride_w=1, pad_h=1, pad_w=2, pool=P.Pooling.AVE
     )
     _test_pooling(data, pool=P.Pooling.AVE, global_pooling=True)
-
-
-#######################################################################
-# Power
-# -----
-def _test_power(data, **kwargs):
-    """One iteration of Power."""
-    _test_op(data, L.Power, "Power", **kwargs)
-
-
-def test_forward_Power():
-    """Power"""
-    data = np.random.rand(1, 3, 10, 10).astype(np.float32)
-    _test_power(data, power_param={"power": 0.37, "scale": 0.83, "shift": -2.4})
-    _test_power(data, power_param={"power": 0.37, "scale": 0.83, "shift": 0.0})
-    _test_power(data, power_param={"power": 0.0, "scale": 0.83, "shift": -2.4})
-    _test_power(data, power_param={"power": 1.0, "scale": 0.83, "shift": -2.4})
-    _test_power(data, power_param={"power": 2.0, "scale": 0.34, "shift": -2.4})
-    _test_power(data, power_param={"power": 1.0, "scale": 1.0, "shift": 0.0})
 
 
 #######################################################################
@@ -872,81 +791,78 @@ def test_forward_TanH():
 
 
 #######################################################################
-# Reduction
+# Permute
 # -----------
 
 
-def _test_reduction(data, **kwargs):
-    """One iteration of Reduction"""
-    _test_op(data, L.Reduction, "Reduction", **kwargs)
+def _test_permute(data, **kwargs):
+    """One iteration of Permute."""
+    _test_op(data, L.Permute, "Permute", **kwargs)
 
 
-def test_forward_Reduction():
-    """Reduction"""
-    reduction_op = {"SUM": 1, "ASUM": 2, "SUMSQ": 3, "MEAN": 4}
-    _test_reduction(np.random.rand(10).astype(np.float32), operation=reduction_op["SUM"], axis=0)
-    _test_reduction(
-        np.random.rand(10, 20, 30, 40).astype(np.float32), operation=reduction_op["SUM"], axis=3
+def test_forward_Permute():
+    """Permute"""
+    _test_permute(np.random.rand(1, 3, 10, 10).astype(np.float32), order=[0, 2, 3, 1])
+    _test_permute(np.random.rand(1, 3, 10, 10).astype(np.float32), order=[1, 2, 3, 0])
+    _test_permute(np.random.rand(3, 10, 10).astype(np.float32), order=[1, 2, 0])
+    _test_permute(np.random.rand(3, 10).astype(np.float32), order=[1, 0])
+
+
+#######################################################################
+# PriorBox
+# -----------
+
+
+def _test_priorbox(data, **kwargs):
+    """One iteration of PriorBox"""
+    shape_list = list()
+    if isinstance(data, (list, tuple)):
+        for d in data:
+            shape_list.extend(list(d.shape))
+    else:
+        shape_list = list(data.shape)
+
+    n = caffe.NetSpec()
+    n.data = L.Input(input_param={"shape": {"dim": list(data.shape)}})
+
+    n.conv1 = L.Convolution(
+        n.data,
+        num_output=20,
+        bias_term=True,
+        pad=0,
+        kernel_size=3,
+        stride=2,
+        dilation=1,
+        weight_filler=dict(type="xavier"),
+        bias_filler=dict(type="xavier"),
     )
-    _test_reduction(
-        np.random.rand(10, 20, 30, 40).astype(np.float32), operation=reduction_op["SUM"], axis=1
-    )
-    _test_reduction(
-        np.random.rand(10).astype(np.float32), operation=reduction_op["SUM"], axis=0, coeff=0.5
-    )
-    _test_reduction(
-        np.random.rand(10, 20, 30, 40).astype(np.float32),
-        operation=reduction_op["SUM"],
-        axis=3,
-        coeff=5.0,
-    )
-    _test_reduction(np.random.rand(10).astype(np.float32), operation=reduction_op["ASUM"])
-    _test_reduction(
-        np.random.rand(10, 20).astype(np.float32), operation=reduction_op["ASUM"], axis=1
-    )
-    _test_reduction(
-        np.random.rand(10, 20, 30, 40).astype(np.float32), operation=reduction_op["ASUM"], axis=3
-    )
-    _test_reduction(
-        np.random.rand(10).astype(np.float32), operation=reduction_op["ASUM"], axis=0, coeff=0.0
-    )
-    _test_reduction(
-        np.random.rand(10, 20, 30).astype(np.float32),
-        operation=reduction_op["ASUM"],
-        axis=2,
-        coeff=7.0,
-    )
-    _test_reduction(
-        np.random.rand(10, 20, 30, 40, 10).astype(np.float32),
-        operation=reduction_op["ASUM"],
-        axis=3,
-        coeff=1.0,
-    )
-    _test_reduction(np.random.rand(10).astype(np.float32), operation=reduction_op["SUMSQ"], axis=0)
-    _test_reduction(
-        np.random.rand(10, 20, 30, 40).astype(np.float32), operation=reduction_op["SUMSQ"], axis=3
-    )
-    _test_reduction(
-        np.random.rand(10).astype(np.float32), operation=reduction_op["SUMSQ"], axis=0, coeff=0.0
-    )
-    _test_reduction(
-        np.random.rand(10, 20, 30, 40, 50).astype(np.float32),
-        operation=reduction_op["SUMSQ"],
-        axis=4,
-        coeff=2.0,
-    )
-    _test_reduction(np.random.rand(10).astype(np.float32), operation=reduction_op["MEAN"], axis=0)
-    _test_reduction(
-        np.random.rand(10, 20, 30, 40).astype(np.float32), operation=reduction_op["MEAN"], axis=3
-    )
-    _test_reduction(
-        np.random.rand(10).astype(np.float32), operation=reduction_op["MEAN"], axis=0, coeff=0.0
-    )
-    _test_reduction(
-        np.random.rand(10, 20, 30, 40).astype(np.float32),
-        operation=reduction_op["MEAN"],
-        axis=3,
-        coeff=2.0,
+    n.relu1 = L.ReLU(n.conv1)
+    n.output = L.PriorBox(n.conv1, n.data, **kwargs)
+
+    # obtain the .caffemodel file and .prototxt file
+    (proto_file, blob_file, solver_file) = _gen_filename_str("PriorBox", shape_list, **kwargs)
+    _gen_model_files(n, proto_file, blob_file, solver_file)
+    # run model in Caffe
+    caffe_out = _run_caffe(data, proto_file, blob_file)
+    # run model in TVM
+    tvm_out = _run_tvm(data, proto_file, blob_file)
+    _compare_caffe_tvm(caffe_out, tvm_out)
+
+
+def test_forward_PriorBox():
+    """PriorBox"""
+    data = np.random.rand(1, 3, 224, 224).astype(np.float32)
+
+    _test_priorbox(
+        data,
+        prior_box_param=dict(
+            min_size=60.0,
+            aspect_ratio=2.0,
+            flip=True,
+            clip=False,
+            variance=[0.1, 0.1, 0.2, 0.2],
+            offset=0.5,
+        ),
     )
 
 
@@ -1039,6 +955,18 @@ def test_forward_Embed():
 
 
 #######################################################################
+# (todo)
+# Normalize
+# Proposal
+# Python
+# Resize
+# ROIPooling
+# Upsample
+# (to fix)
+# Scale
+# -----------
+#######################################################################
+
 # Mobilenetv2
 # -----------
 
@@ -1052,14 +980,8 @@ def _test_mobilenetv2(data):
     data_process = data_process / 58.8
     data_process = data_process.astype(np.float32)
 
-    proto_file_url = (
-        "https://github.com/shicai/MobileNet-Caffe/raw/master/mobilenet_v2_deploy.prototxt"
-    )
-    blob_file_url = (
-        "https://github.com/shicai/MobileNet-Caffe/blob/master/mobilenet_v2.caffemodel?raw=true"
-    )
-    proto_file = download_testdata(proto_file_url, "mobilenetv2.prototxt", module="model")
-    blob_file = download_testdata(blob_file_url, "mobilenetv2.caffemodel", module="model")
+    proto_file = os.path.join(AiBench_DIR, "net/caffe/mobilenet/mobilenetv2.prototxt")
+    blob_file = os.path.join(AiBench_DIR, "net/caffe/mobilenet/mobilenetv2.caffemodel")
     _test_network(data_process, proto_file, blob_file)
 
 
@@ -1082,12 +1004,8 @@ def _test_alexnet(data):
     data_process = data - mean_val
     data_process = data_process.astype(np.float32)
 
-    proto_file_url = (
-        "https://github.com/BVLC/caffe/raw/master/models/" "bvlc_alexnet/deploy.prototxt"
-    )
-    blob_file_url = "http://dl.caffe.berkeleyvision.org/bvlc_alexnet.caffemodel"
-    proto_file = download_testdata(proto_file_url, "alexnet.prototxt", module="model")
-    blob_file = download_testdata(blob_file_url, "alexnet.caffemodel", module="model")
+    proto_file = os.path.join(AiBench_DIR, "net/caffe/alexnet/alexnet.prototxt")
+    blob_file = os.path.join(AiBench_DIR, "net/caffe/alexnet/alexnet.caffemodel")
     _test_network(data_process, proto_file, blob_file)
 
 
@@ -1110,15 +1028,8 @@ def _test_resnet50(data):
     data_process = data - mean_val
     data_process = data_process.astype(np.float32)
 
-    proto_file_url = (
-        "https://github.com/fernchen/CaffeModels/raw/master/resnet/ResNet-50-deploy.prototxt"
-    )
-    blob_file_url = (
-        "https://github.com/fernchen/CaffeModels/raw/master/resnet/ResNet-50-model.caffemodel"
-    )
-
-    proto_file = download_testdata(proto_file_url, "resnet50.prototxt", module="model")
-    blob_file = download_testdata(blob_file_url, "resnet50.caffemodel", module="model")
+    proto_file = os.path.join(AiBench_DIR, "net/caffe/resnet/resnet50.prototxt")
+    blob_file = os.path.join(AiBench_DIR, "net/caffe/resnet/resnet50.caffemodel")
 
     _test_network(data_process, proto_file, blob_file)
 
@@ -1143,12 +1054,8 @@ def _test_inceptionv1(data):
     data_process = data_process / 58.8
     data_process = data_process.astype(np.float32)
 
-    proto_file_url = (
-        "https://github.com/BVLC/caffe/raw/master/models" "/bvlc_googlenet/deploy.prototxt"
-    )
-    blob_file_url = "http://dl.caffe.berkeleyvision.org/bvlc_googlenet.caffemodel"
-    proto_file = download_testdata(proto_file_url, "inceptionv1.prototxt", module="model")
-    blob_file = download_testdata(blob_file_url, "inceptionv1.caffemodel", module="model")
+    proto_file = os.path.join(AiBench_DIR, "net/caffe/inception/inceptionv1.prototxt")
+    blob_file = os.path.join(AiBench_DIR, "net/caffe/inception/inceptionv1.caffemodel")
     _test_network(data_process, proto_file, blob_file)
 
 
@@ -1156,6 +1063,34 @@ def test_forward_Inceptionv1():
     """Inceptionv4"""
     data = np.random.randint(0, 256, size=(1, 3, 224, 224)).astype(np.float32)
     _test_inceptionv1(data)
+
+
+#######################################################################
+# SSDMobilenetv1
+# -----------
+
+
+def _test_ssdmobilentv1(data):
+    """One iteration of SSDMobilenetv1"""
+    proto_file = os.path.join(AiBench_DIR, "net/caffe/ssd/ssdmobilenetv1.prototxt")
+    blob_file = os.path.join(AiBench_DIR, "net/caffe/ssd/ssdmobilenetv1.caffemodel")
+    # run model in Caffe
+    caffe_out = _run_caffe(data, proto_file, blob_file)
+    # run model in TVM
+    tvm_out = _run_tvm(data, proto_file, blob_file)
+    for i in range(len(caffe_out)):
+        tvm.testing.assert_allclose(caffe_out[i], tvm_out[i], rtol=1e-4, atol=1e-3)
+
+
+def test_forward_SSDMobilenetv1():
+    """SSDMobilenetv1"""
+    data = np.random.randint(0, 256, size=(1, 3, 300, 300)).astype(np.float32)
+    _test_ssdmobilentv1(data)
+
+
+def test_end():
+    if os.path.exists(CURRENT_DIR):
+        shutil.rmtree(CURRENT_DIR)
 
 
 if __name__ == "__main__":
@@ -1182,15 +1117,21 @@ if __name__ == "__main__":
     # Reshape
     test_forward_Reshape()
     test_forward_Flatten()
-    test_forward_Reduction()
 
     # Math
     test_forward_Concat()
     test_forward_Crop()
     test_forward_Slice()
+    # test_forward_Permute()
+
+    # Image Processing
+    # test_forward_PriorBox()
 
     # End to End
     test_forward_Mobilenetv2()
     test_forward_Alexnet()
     test_forward_Resnet50()
     test_forward_Inceptionv1()
+    test_forward_SSDMobilenetv1()
+
+    test_end()
