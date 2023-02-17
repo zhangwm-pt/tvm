@@ -11,6 +11,16 @@ jobs:
           pip install sphinx sphinx_rtd_theme
       - name: Sphinx build
         run: |
+          mkdir build
+          cd build
+          cp ../cmake/config.cmake .
+          echo 'set(USE_MICRO ON)' >> config.cmake
+          cmake ..
+          make
+          cd ..
+          export PYTHONPATH=${PWD}/python
+          export PYTHONPATH=${PWD}/thead:${PYTHONPATH}
+          echo ${PYTHONPATH}
           cd docs
           make --ignore-errors html
       - name: Deploy
@@ -19,5 +29,5 @@ jobs:
         with:
           publish_branch: gh-pages
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: _build/
+          publish_dir: docs/_build/html
           force_orphan: true
