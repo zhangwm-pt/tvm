@@ -5,26 +5,27 @@ jobs:
     runs-on: Ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
-        with:
-          submodules: 'recursive'
+#        with:
+#          submodules: 'recursive'
 #      - uses: actions/setup-python@v2
 #      - name: Install dependencies
 #        run: |
 #          pip install sphinx sphinx_rtd_theme
-      - name: Set up environment
-        uses: ./.github/actions/setup
+#      - name: Set up environment
+#        uses: ./.github/actions/setup
       - name: doc build
         run: |
-          tests/scripts/task_config_build_cpu.sh build
-          cd build
-          cmake ..
-          cmake --build . --config Release 
-          cd ..
-          export PYTHONPATH=${PWD}/python
-          export PYTHONPATH=${PWD}/thead:${PYTHONPATH}
-          echo ${PYTHONPATH}
-          cd docs
-          make --ignore-errors html
+          docker run --rm tlcpack/ci-lint:20220513-055910-fa834f67e
+#          tests/scripts/task_config_build_cpu.sh build
+#          cd build
+#          cmake ..
+#          cmake --build . --config Release 
+#          cd ..
+#          export PYTHONPATH=${PWD}/python
+#          export PYTHONPATH=${PWD}/thead:${PYTHONPATH}
+#          echo ${PYTHONPATH}
+#          cd docs
+#          make --ignore-errors html
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
