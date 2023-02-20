@@ -78,12 +78,12 @@ def git_describe_version(original_version):
 
 
 # Version information.
-#import tvm
-#from tvm import topi
-#from tvm import te
-#from tvm import testing
-#
-#version = git_describe_version(tvm.__version__)
+import tvm
+from tvm import topi
+from tvm import te
+from tvm import testing
+
+version = git_describe_version(tvm.__version__)
 release = "2.2" 
 
 
