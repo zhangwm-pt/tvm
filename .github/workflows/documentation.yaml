@@ -15,7 +15,10 @@ jobs:
 #        uses: ./.github/actions/setup
       - name: doc build
         run: |
-          scripts/hhb_doc_docker.sh
+          mkdir docs/_build
+          mkdir docs/_build/html
+          echo "Hello hhb" > docs/_build/html/index.html
+#          scripts/hhb_doc_docker.sh
 #          docker run --rm tlcpack/ci-lint:20220513-055910-fa834f67e
 #          tests/scripts/task_config_build_cpu.sh build
 #          cd build
@@ -29,7 +32,7 @@ jobs:
 #          make --ignore-errors html
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         with:
           publish_branch: gh-pages
           github_token: ${{ secrets.GITHUB_TOKEN }}
