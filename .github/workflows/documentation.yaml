@@ -15,8 +15,8 @@ jobs:
 #        uses: ./.github/actions/setup
       - name: doc build
         run: |
-#          docker run --rm tlcpack/ci-lint:20220513-055910-fa834f67e
           scripts/hhb_doc_docker.sh
+#          docker run --rm tlcpack/ci-lint:20220513-055910-fa834f67e
 #          tests/scripts/task_config_build_cpu.sh build
 #          cd build
 #          cmake ..
