@@ -30,44 +30,6 @@ driving its costs down.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Getting Started
-
-   install/index
-   contribute/index
-
-.. toctree::
-   :maxdepth: 1
-   :caption: User Guide
-
-   tutorial/index
-   how_to/index
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Developer Guide
-
-   dev/tutorial/index
-   dev/how_to/how_to.rst
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Architecture  Guide
-
-   arch/index
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Topic Guides
-
-   topic/microtvm/index
-   topic/vta/index
-
-.. toctree::
-   :maxdepth: 1
    :caption: Reference Guide
 
-   reference/langref/index
    reference/api/python/index
-   reference/api/links
-   reference/publications
-   genindex

@@ -58,10 +58,10 @@ sys.path.insert(0, str(tvm_path.resolve() / "docs"))
 # -- General configuration ------------------------------------------------
 
 # General information about the project.
-project = "tvm"
-author = "Apache Software Foundation"
-copyright = "2020 - 2022, %s" % author
-github_doc_root = "https://github.com/apache/tvm/tree/main/docs/"
+project = "HHB"
+author = "T-Head Semiconductor Co."
+copyright = "2020 - 2023, %s" % author
+github_doc_root = "https://github.com/zhangwm-pt/tvm/tree/main/docs/"
 
 os.environ["TVM_BUILD_DOC"] = "1"
 
@@ -78,13 +78,13 @@ def git_describe_version(original_version):
 
 
 # Version information.
-import tvm
-from tvm import topi
-from tvm import te
-from tvm import testing
-
-version = git_describe_version(tvm.__version__)
-release = version
+#import tvm
+#from tvm import topi
+#from tvm import te
+#from tvm import testing
+#
+#version = git_describe_version(tvm.__version__)
+release = "2.2" 
 
 
 def monkey_patch(module_name, func_name):
@@ -380,9 +380,9 @@ html_theme_options = {
     "logo_only": True,
 }
 
-html_logo = "_static/img/tvm-logo-small.png"
+#html_logo = "_static/img/tvm-logo-small.png"
 
-html_favicon = "_static/img/tvm-logo-square.png"
+#html_favicon = "_static/img/tvm-logo-square.png"
 
 
 # Output file base name for HTML help builder.
@@ -589,40 +589,40 @@ tvm_alias_check_map = {
 ## Setup header and other configs
 import tlcpack_sphinx_addon
 
-footer_copyright = "© 2022 Apache Software Foundation | All rights reserved"
-footer_note = " ".join(
-    """
-Copyright © 2022 The Apache Software Foundation. Apache TVM, Apache, the Apache feather,
-and the Apache TVM project logo are either trademarks or registered trademarks of
-the Apache Software Foundation.""".split(
-        "\n"
-    )
-).strip()
-
-header_logo = "https://tvm.apache.org/assets/images/logo.svg"
-header_logo_link = "https://tvm.apache.org/"
+#footer_copyright = "© 2022 Apache Software Foundation | All rights reserved"
+#footer_note = " ".join(
+#    """
+#Copyright © 2022 The Apache Software Foundation. Apache TVM, Apache, the Apache feather,
+#and the Apache TVM project logo are either trademarks or registered trademarks of
+#the Apache Software Foundation.""".split(
+#        "\n"
+#    )
+#).strip()
+#
+#header_logo = "https://tvm.apache.org/assets/images/logo.svg"
+#header_logo_link = "https://tvm.apache.org/"
 
 header_links = [
-    ("Community", "https://tvm.apache.org/community"),
-    ("Download", "https://tvm.apache.org/download"),
-    ("VTA", "https://tvm.apache.org/vta"),
-    ("Blog", "https://tvm.apache.org/blog"),
-    ("Docs", "https://tvm.apache.org/docs"),
-    ("Conference", "https://tvmconf.org"),
-    ("Github", "https://github.com/apache/tvm/"),
+#    ("Community", "https://tvm.apache.org/community"),
+#    ("Download", "https://tvm.apache.org/download"),
+#    ("VTA", "https://tvm.apache.org/vta"),
+#    ("Blog", "https://tvm.apache.org/blog"),
+    ("Docs", "https://www.yuque.com/za4k4z/oxlbxl"),
+#    ("Conference", "https://tvmconf.org"),
+#    ("Github", "https://github.com/apache/tvm/"),
 ]
 
-header_dropdown = {
-    "name": "ASF",
-    "items": [
-        ("Apache Homepage", "https://apache.org/"),
-        ("License", "https://www.apache.org/licenses/"),
-        ("Sponsorship", "https://www.apache.org/foundation/sponsorship.html"),
-        ("Security", "https://www.apache.org/security/"),
-        ("Thanks", "https://www.apache.org/foundation/thanks.html"),
-        ("Events", "https://www.apache.org/events/current-event"),
-    ],
-}
+#header_dropdown = {
+#    "name": "ASF",
+#    "items": [
+#        ("Apache Homepage", "https://apache.org/"),
+#        ("License", "https://www.apache.org/licenses/"),
+#        ("Sponsorship", "https://www.apache.org/foundation/sponsorship.html"),
+#        ("Security", "https://www.apache.org/security/"),
+#        ("Thanks", "https://www.apache.org/foundation/thanks.html"),
+#        ("Events", "https://www.apache.org/events/current-event"),
+#    ],
+#}
 
 
 def fixup_tutorials(original_url: str) -> str:
@@ -643,19 +643,19 @@ def fixup_tutorials(original_url: str) -> str:
 
 
 html_context = {
-    "footer_copyright": footer_copyright,
-    "footer_note": footer_note,
+#    "footer_copyright": footer_copyright,
+#    "footer_note": footer_note,
     "header_links": header_links,
-    "header_dropdown": header_dropdown,
-    "header_logo": header_logo,
-    "header_logo_link": header_logo_link,
+#    "header_dropdown": header_dropdown,
+#    "header_logo": header_logo,
+#    "header_logo_link": header_logo_link,
     "version_prefixes": ["main", "v0.8.0/", "v0.9.0/", "v0.10.0/"],
-    "display_github": True,
-    "github_user": "apache",
-    "github_repo": "tvm",
-    "github_version": "main/docs/",
-    "theme_vcs_pageview_mode": "edit",
-    "edit_link_hook_fn": fixup_tutorials,
+#    "display_github": True,
+#    "github_user": "apache",
+#    "github_repo": "tvm",
+#    "github_version": "main/docs/",
+#    "theme_vcs_pageview_mode": "edit",
+#    "edit_link_hook_fn": fixup_tutorials,
 }
 
 # add additional overrides
