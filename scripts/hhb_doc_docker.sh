@@ -25,10 +25,10 @@ script_dir="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
 echo ${script_dir}
 
-docker run --rm -v $script_dir/../../hhb:/mnt hhb4tools/hhb_build:0.5 sh -c "cd mnt/ && rm build -rf  &&  mkdir build  &&  cd build  &&  cp ../cmake/config.cmake . && echo 'set(USE_MICRO ON)' >> config.cmake &&  cmake ..  &&  make -j32"
+docker run --rm -v $script_dir/../../tvm:/mnt hhb4tools/hhb_build:0.5 sh -c "cd mnt/ && rm build -rf  &&  mkdir build  &&  cd build  &&  cp ../cmake/config.cmake . && echo 'set(USE_MICRO ON)' >> config.cmake &&  cmake ..  &&  make -j32"
 
 # docker run --rm -v $script_dir/../../hhb:/mnt yl-hub.eng.t-head.cn/flow-design/hhb_build:0.9 sh -c "cd mnt/ && ./scripts/hhb_doc.sh"
-docker run --rm -v $script_dir/../../hhb:/mnt hhb4tools/hhb_build:0.5 sh -c "cd mnt/ && ./scripts/hhb_doc.sh"
+docker run --rm -v $script_dir/../../tvm:/mnt hhb4tools/hhb_build:0.5 sh -c "cd mnt/ && ./scripts/hhb_doc.sh"
 
 #cd docs/_build/html
 #python3 -m http.server
