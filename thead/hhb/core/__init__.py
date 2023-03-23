@@ -1,4 +1,3 @@
-#!/bin/bash
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,21 +14,3 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
-set -e
-set -u
-set -o pipefail
-
-script_dir="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
-
-export TVM_TUTORIAL_EXEC_PATTERN=none
-
-export PYTHONPATH=$script_dir/../python
-export PYTHONPATH=$script_dir/../thead:${PYTHONPATH}
-
-cd $script_dir/../docs
-cp hhb_conf.py conf.py
-cp hhb_index.rst index.rst
-make --ignore-errors html
-# cd _build/html
-# python3 -m http.server

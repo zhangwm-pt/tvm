@@ -1,4 +1,3 @@
-#!/bin/bash
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -16,20 +15,21 @@
 # specific language governing permissions and limitations
 # under the License.
 
-set -e
-set -u
-set -o pipefail
 
-script_dir="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+from . import benchmark
+from . import importer
+from . import codegen
+from . import profiler
+from . import quantizer
+from . import simulate
 
-export TVM_TUTORIAL_EXEC_PATTERN=none
+# main
+from .main import Compiler
+from .main import Profiler
+from .core.arguments_manage import Config
 
-export PYTHONPATH=$script_dir/../python
-export PYTHONPATH=$script_dir/../thead:${PYTHONPATH}
-
-cd $script_dir/../docs
-cp hhb_conf.py conf.py
-cp hhb_index.rst index.rst
-make --ignore-errors html
-# cd _build/html
-# python3 -m http.server
+# common
+from .core.arguments_manage import generate_hhb_default_config
+from .core.common import convert_invalid_symbol
+from .core.common import print_top5
+from .main import set_debug_level

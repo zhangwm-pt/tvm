@@ -1,4 +1,3 @@
-#!/bin/bash
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,21 +14,26 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+CC = gcc
+CFLAGES = -O0 -g3
+CFLAGES += -I../include -I../../jpeg-9d
+CFLAGES += -I../../libpng-1.6.37/
+CFLAGES += -I../../zlib-1.2.11
+LDFLAGS = ../../jpeg-9d/build/liblibjpeg.a -lm
+LDFLAGS += ../../libpng-1.6.37/build/libpng.a
+LDFLAGS += ../../zlib-1.2.11/build/libz.a
 
-set -e
-set -u
-set -o pipefail
+.PYONY : all clean
+all : test_main_op
 
-script_dir="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+test_main_op : test_main_op.o process.o
+	${CC} ${CFLAGES} -o $@ $^ ${LDFLAGS}
 
-export TVM_TUTORIAL_EXEC_PATTERN=none
+test_main_op.o : test_main_op.c
+	${CC} -c ${CFLAGES} -o $@ $^
 
-export PYTHONPATH=$script_dir/../python
-export PYTHONPATH=$script_dir/../thead:${PYTHONPATH}
+process.o : ../src/process.c
+	${CC} -c ${CFLAGES} -o $@ $^
 
-cd $script_dir/../docs
-cp hhb_conf.py conf.py
-cp hhb_index.rst index.rst
-make --ignore-errors html
-# cd _build/html
-# python3 -m http.server
+clean :
+	rm test_main_op test_main_op.o process.o

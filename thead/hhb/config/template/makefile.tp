@@ -1,4 +1,3 @@
-#!/bin/bash
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -16,20 +15,24 @@
 # specific language governing permissions and limitations
 # under the License.
 
-set -e
-set -u
-set -o pipefail
+CC = #_hhb_makefile_compiler_#
 
-script_dir="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+INCLUDE += #_hhb_makefile_include_#
 
-export TVM_TUTORIAL_EXEC_PATTERN=none
+LDFLAGS += #_hhb_makefile_ldflag1_#
 
-export PYTHONPATH=$script_dir/../python
-export PYTHONPATH=$script_dir/../thead:${PYTHONPATH}
+CFLAGS += #_hhb_makefile_cflag_#
+LDFLAGS += #_hhb_makefile_ldflag2_#
 
-cd $script_dir/../docs
-cp hhb_conf.py conf.py
-cp hhb_index.rst index.rst
-make --ignore-errors html
-# cd _build/html
-# python3 -m http.server
+.PHONY: clean all
+
+all: #_hhb_makefile_default_target_#
+
+#_hhb_makefile_compile_obj_#
+
+#_hhb_makefile_elf_#
+
+#_hhb_makefile_run_sim_#
+
+clean:
+	#_hhb_makefile_clean_#
