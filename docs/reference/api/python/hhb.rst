@@ -15,37 +15,9 @@
     specific language governing permissions and limitations
     under the License.
 
-Python API
-==========
-
-
-.. toctree::
-   :maxdepth: 2
-
-   hhb
-   runtime
-   ndarray
-   error
-   ir
-   target
-   tir
-   te
-   driver
-   relay/index
-   relay/frontend
-   relay/nn
-   relay/vision
-   relay/image
-   relay/transform
-   relay/analysis
-   relay/backend
-   relay/dataflow_pattern
-   relay/testing
-   autotvm
-   auto_scheduler
-   rpc
-   micro
-   contrib
-   graph_executor
-   topi
-   vta/index
+hhb
+------
+.. automodule:: hhb
+   :members:
+   :imported-members:
+   :autosummary:
