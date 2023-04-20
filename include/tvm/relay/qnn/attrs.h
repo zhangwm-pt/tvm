@@ -911,6 +911,7 @@ struct QnnCSIMaxPool2DAttrs : public tvm::AttrsNode<QnnCSIMaxPool2DAttrs> {
   bool ceil_mode;
   Array<IndexExpr> pool_size;
   Array<IndexExpr> strides;
+  Array<IndexExpr> dilation;
   Array<IndexExpr> padding;
   String layout;
   String layer_name;
@@ -924,6 +925,9 @@ struct QnnCSIMaxPool2DAttrs : public tvm::AttrsNode<QnnCSIMaxPool2DAttrs> {
     TVM_ATTR_FIELD(strides)
         .set_default(Array<IndexExpr>({1, 1}))
         .describe("Specifies the strides of the pool.");
+    TVM_ATTR_FIELD(dilation)
+        .set_default(Array<IndexExpr>({1, 1}))
+        .describe("Specifies the dilation of the pool.");
     TVM_ATTR_FIELD(padding)
         .set_default(Array<IndexExpr>({0, 0}))
         .describe(
@@ -985,6 +989,7 @@ struct QnnCSIAvgPool2DAttrs : public tvm::AttrsNode<QnnCSIAvgPool2DAttrs> {
   bool count_include_pad;
   Array<IndexExpr> pool_size;
   Array<IndexExpr> strides;
+  Array<IndexExpr> dilation;
   Array<IndexExpr> padding;
   std::string layout;
   String layer_name;
@@ -998,6 +1003,9 @@ struct QnnCSIAvgPool2DAttrs : public tvm::AttrsNode<QnnCSIAvgPool2DAttrs> {
     TVM_ATTR_FIELD(strides)
         .set_default(Array<IndexExpr>({1, 1}))
         .describe("Specifies the strides of the pool.");
+    TVM_ATTR_FIELD(dilation)
+        .set_default(Array<IndexExpr>({1, 1}))
+        .describe("Specifies the dilation of the pool.");
     TVM_ATTR_FIELD(padding)
         .set_default(Array<IndexExpr>({0, 0}))
         .describe(
@@ -2138,6 +2146,61 @@ struct QnnCSIDataConvertAttrs : public tvm::AttrsNode<QnnCSIDataConvertAttrs> {
   String layer_name;
 
   TVM_DECLARE_ATTRS(QnnCSIDataConvertAttrs, "relay.attrs.QnnCSIDataConvertAttrs") {
+    TVM_ATTR_FIELD(out_dtype).set_default(NullValue<DataType>()).describe("Output data type.");
+    TVM_ATTR_FIELD(q_params).describe("Quantization related attributes.");
+    TVM_ATTR_FIELD(layer_name).describe("The name of this layer");
+  }
+};
+
+/*! \brief Attributes for where softmax operator */
+struct QnnCSIWhereSoftmaxAttrs : public tvm::AttrsNode<QnnCSIWhereSoftmaxAttrs> {
+  int32_t axis;
+  double minus_inf;
+  Array<Array<IndexExpr>> q_params;
+  DataType out_dtype;
+  String layer_name;
+
+  TVM_DECLARE_ATTRS(QnnCSIWhereSoftmaxAttrs, "relay.attrs.QnnCSIWhereSoftmaxAttrs") {
+    TVM_ATTR_FIELD(axis).set_default(-1).describe("Axis along which to do softmax.");
+    TVM_ATTR_FIELD(minus_inf).describe("Constant attr minus inf.");
+    TVM_ATTR_FIELD(out_dtype).set_default(NullValue<DataType>()).describe("Output data type.");
+    TVM_ATTR_FIELD(q_params).describe("Quantization related attributes.");
+    TVM_ATTR_FIELD(layer_name).describe("The name of this layer");
+  }
+};
+
+/*! \brief Attribute for qnn csi quantize operator */
+struct QnnCSIQuantizeAttrs : public tvm::AttrsNode<QnnCSIQuantizeAttrs> {
+  int axis;
+  Array<Array<IndexExpr>> q_params;
+  DataType out_dtype;
+  String layer_name;
+
+  TVM_DECLARE_ATTRS(QnnCSIQuantizeAttrs, "relay.attrs.QnnCSIQuantizeAttrs") {
+    TVM_ATTR_FIELD(out_dtype).describe("Output data type, can be one of [int8 or uint8].");
+    TVM_ATTR_FIELD(axis)
+        .describe(
+            "The output channel axis for channel wise quantization. Default value is -1,"
+            "which corresponds to the last axis.")
+        .set_default(-1);
+    TVM_ATTR_FIELD(q_params).describe("Quantization related attributes.");
+    TVM_ATTR_FIELD(layer_name).describe("The name of this layer");
+  }
+};
+
+/*! \brief Attribute for qnn csi dequantize operator */
+struct QnnCSIDequantizeAttrs : public tvm::AttrsNode<QnnCSIDequantizeAttrs> {
+  int axis;
+  Array<Array<IndexExpr>> q_params;
+  DataType out_dtype;
+  String layer_name;
+
+  TVM_DECLARE_ATTRS(QnnCSIDequantizeAttrs, "relay.attrs.QnnCSIDequantizeAttrs") {
+    TVM_ATTR_FIELD(axis)
+        .describe(
+            "The channel axis for channel wise dequantization. Default value is -1,"
+            "which corresponds to the last axis.")
+        .set_default(-1);
     TVM_ATTR_FIELD(out_dtype).set_default(NullValue<DataType>()).describe("Output data type.");
     TVM_ATTR_FIELD(q_params).describe("Quantization related attributes.");
     TVM_ATTR_FIELD(layer_name).describe("The name of this layer");

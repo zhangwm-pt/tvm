@@ -40,6 +40,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <list>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -91,10 +92,11 @@ struct output_element {
   std::vector<string> names;
 };
 
-#define HHB_VERSION "2.1.x"
+#define HHB_VERSION "2.2.0"
 
 /*! \brief Attributes to store the options for CSI-NN2 */
 struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
+  std::string ahead_of_time;
   std::string sid;
   std::string target;
   std::string params_path;
@@ -129,8 +131,6 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
   std::string weight_quantized_type;
   std::string layout;
   double channel_quantization_ratio_threshold;
-  std::string structed_sparsity;
-  int kernel_parallel;
   std::string conv2d_algorithm;
   int matrix_extension_mlen;
 
@@ -147,12 +147,13 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
   bool fuse_add_after_conv;
   bool fuse_zp2bias;
   bool use_custom_fusion;
+  bool dynamic_shape;
   bool convert_to_relay;
 
   /* target specific */
-  /* light */
-  double light_input_fix_height;
-  double light_input_fix_width;
+  /* th1520 */
+  double th1520_input_fix_height;
+  double th1520_input_fix_width;
 
   int h_sram_size;
   int h_max_groups;
@@ -164,6 +165,7 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
   int model_priority;
 
   TVM_DECLARE_ATTRS(CSINNConfigNode, "ext.attrs.CSINNConfigNode") {
+    TVM_ATTR_FIELD(ahead_of_time).set_default("unset");
     TVM_ATTR_FIELD(sid).set_default("csinn");
     TVM_ATTR_FIELD(target).set_default("ref");
     TVM_ATTR_FIELD(params_path).set_default("./");
@@ -200,11 +202,12 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
     TVM_ATTR_FIELD(fuse_mul_after_conv).set_default(true);
     TVM_ATTR_FIELD(fuse_add_before_conv).set_default(true);
     TVM_ATTR_FIELD(fuse_add_after_conv).set_default(true);
+    TVM_ATTR_FIELD(dynamic_shape).set_default(false);
     TVM_ATTR_FIELD(fuse_zp2bias).set_default(false);
     TVM_ATTR_FIELD(use_custom_fusion).set_default(false);
     TVM_ATTR_FIELD(convert_to_relay).set_default(false);
-    TVM_ATTR_FIELD(light_input_fix_height).set_default(0.0);
-    TVM_ATTR_FIELD(light_input_fix_width).set_default(0.0);
+    TVM_ATTR_FIELD(th1520_input_fix_height).set_default(0.0);
+    TVM_ATTR_FIELD(th1520_input_fix_width).set_default(0.0);
     TVM_ATTR_FIELD(input_memory_type).set_default(Array<Integer>({0}));
     TVM_ATTR_FIELD(output_memory_type).set_default(Array<Integer>({0}));
     TVM_ATTR_FIELD(h_sram_size).set_default(0);
@@ -220,20 +223,8 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
     TVM_ATTR_FIELD(dump_quantization_loss).set_default(false);
     TVM_ATTR_FIELD(loss_threshold_type).set_default("avg");
     TVM_ATTR_FIELD(from_quant_file).set_default(false);
-    TVM_ATTR_FIELD(structed_sparsity).set_default("unset");
-    TVM_ATTR_FIELD(kernel_parallel).set_default(0);
     TVM_ATTR_FIELD(conv2d_algorithm).set_default("unset");
     TVM_ATTR_FIELD(matrix_extension_mlen).set_default(0);
-  }
-};
-
-class LayerCounter : public HHBExprVisitor {
- public:
-  virtual ~LayerCounter() {}
-  std::unordered_map<const Object*, size_t> GetLayerCounter() {
-    std::unordered_map<const Object*, size_t> layer_count;
-    layer_count = this->visit_counter_;
-    return layer_count;
   }
 };
 
@@ -263,6 +254,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     this->multithread = opt_cfg->multi_thread;
     this->model_save = opt_cfg->model_save;
     this->model_priority = opt_cfg->model_priority;
+    this->dynamic_shape_ = opt_cfg->dynamic_shape;
     this->trace_strategy_ = opt_cfg->trace_strategy;
     this->input_memory_type = __convert_list(opt_cfg->input_memory_type);
     this->output_memory_type = __convert_list(opt_cfg->output_memory_type);
@@ -271,10 +263,8 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     this->hybrid_layer_name = __convert_string_list(opt_cfg->hybrid_layer_name);
     this->auto_hybrid_quantization = opt_cfg->auto_hybrid_quantization;
 
-    if (this->target_ == "light" && !auto_hybrid_quantization) {
-      target_name_ = "CSINN_LIGHT";
-    } else if (this->target_ == "light_new") {
-      target_name_ = "CSINN_LIGHT";
+    if (this->target_ == "th1520" && !auto_hybrid_quantization) {
+      target_name_ = "CSINN_TH1520";
     } else if (this->target_ == "anole") {
       target_name_ = "CSINN_ANOLE";
     } else if (this->target_ == "dp1k") {
@@ -287,11 +277,9 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       target_name_ = "CSINN_RVM";
     } else if (this->target_ == "c908") {
       target_name_ = "CSINN_C908";
-    } else if (this->target_ == "i805") {
-      target_name_ = "CSINN_I805";
-    } else if (target_ == "hlight" || (target_ == "light" && auto_hybrid_quantization)) {
-      target_name_ = "CSINN_REF";
-    } else if (target_ == "asp") {
+    } else if (this->target_ == "c920") {
+      target_name_ = "CSINN_C920";
+    } else if (target_ == "hth1520" || (target_ == "th1520" && auto_hybrid_quantization)) {
       target_name_ = "CSINN_REF";
     } else if (target_ == "x86_ref") {
       target_name_ = "CSINN_REF";
@@ -349,7 +337,6 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     } else {
       LOG(WARNING) << "Unsupport dtype activation.";
     }
-
     if (opt_cfg->quantization_scheme == "int4_asym_w_sym") {
       cfg->quantization_scheme = "CSINN_QUANT_INT4_ASYM_W_SYM";
     } else if (opt_cfg->quantization_scheme == "uint8_asym") {
@@ -366,6 +353,8 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       cfg->quantization_scheme = "CSINN_QUANT_INT16_SYM";
     } else if (opt_cfg->quantization_scheme == "float16") {
       cfg->quantization_scheme = "CSINN_QUANT_FLOAT16";
+    } else if (opt_cfg->quantization_scheme == "float16_w_int8") {
+      cfg->quantization_scheme = "CSINN_QUANT_FLOAT16_W_INT8";
     } else if (opt_cfg->quantization_scheme == "bfloat16") {
       cfg->quantization_scheme = "CSINN_QUANT_BFLOAT16";
     } else if (opt_cfg->quantization_scheme == "float32") {
@@ -405,7 +394,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
 
     hybrid_cfg = new QConfig_();
     __update_hybrid_quantization(hybrid_cfg, hybrid_quantization_scheme);
-    if (target_ == "light" && hybrid_quantization_scheme == "int16_sym") {
+    if (target_ == "th1520" && hybrid_quantization_scheme == "int16_sym") {
       hybrid_cfg->dtype_activation = "float";
       hybrid_cfg->dtype_input = "float";
       hybrid_cfg->dtype_weight = "float";
@@ -430,15 +419,18 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
   virtual void opt_end() {}
   virtual string get_ccode(void);
   virtual void SetConstDim(string name, std::vector<int> shape);
-  virtual void SetDim(CSINNTensor* t, string name, std::vector<int> shape);
+  virtual void SetDim(CSINNTensor* t, string name, std::vector<int> shape, bool dynamic_shape);
   virtual CSINNConstantTensor* CreateConstantTensorBase(string name, size_t size,
                                                         std::vector<int> shape, string target_dtype,
                                                         int32_t layout);
+
   // for common constant
   virtual void CreateConstantTensor(CSINNOP* op, CSIConstant* data, string name,
                                     std::vector<int> shape, QuantParams* quant_params,
                                     bool depthwise_kernel = false, bool is_bias = false);
 
+  virtual void CreateWeightTensor(CSINNOP* op, CSIConstant* data, string name,
+                                  std::vector<int> shape, QuantParams* quant_params);
   // for bias
   virtual void CreateConstantTensor(CSINNOP* op, CSIConstant* data, string name,
                                     std::vector<int> shape, string target_dtype,
@@ -452,8 +444,6 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
 
   virtual CSINNVarTensor* CreateTensor(string name, string data, std::vector<int> shape,
                                        QuantParams quant_params, string dtype);
-  virtual void CreateMallocBuf(string name, std::vector<int> shape, string dtype) = 0;
-  virtual void CreateTensorSessData() = 0;
   virtual void CreateGraphTensor(QuantParams q_params);
 
   virtual output_element GetRealInput(const CallNode* call);
@@ -474,8 +464,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
   virtual void DumpConstant();
   virtual void DumpGraphInfo();
   virtual void SessionRunMode() {}
-  virtual void ModelBinarySave() {}
-  virtual void malloc_buf(string out, int out_size) = 0;
+  virtual void ModelBinarySave();
   virtual bool InOpList(const CallNode* call);
   virtual string CreateOutputTensor(CSINNOP* op, std::ostringstream& decl, const CallNode* call,
                                     QuantParams* quant_params);
@@ -562,6 +551,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
   virtual void DataConvert(const CallNode* call);
   virtual void OneHot(const CallNode* call);
   virtual void Where(const CallNode* call);
+  virtual void WhereSoftmax(const CallNode* call);
   virtual void setup_callback(std::ostringstream& decl, string op_name, string prams_name);
   virtual void params_common_setup(std::ostringstream& decl, const CallNode* call, string op_name,
                                    string params_name, string layer_name,
@@ -611,12 +601,6 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
   virtual void EmitHeader(void);
   virtual void EmitSessionSetup(void);
   virtual void EmitSessionRun(void);
-  virtual void FreeTensor(const Expr& expr, string name);
-
-  virtual output_element* GetOutput(string name);
-
-  std::unordered_map<const Object*, size_t> layer_count;
-  std::map<string, string> tensor_data;
 
   void SetExtFuncId(string func_id) { this->ext_func_id_ = func_id; }
 
@@ -628,7 +612,6 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
 
  protected:
   Expr expr_;
-  string siso_input_name;
   std::vector<output_element> output_list_;
   bool first_visit_expr{true};
   std::vector<const tvm::relay::CallNode*> real_out;
@@ -655,6 +638,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
   bool multithread{false};
   string model_save{""};
   int model_priority;
+  bool dynamic_shape_;
   string trace_strategy_{"normal"};
 
   std::vector<int> input_memory_type;
@@ -694,7 +678,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
   /*! \brief The name of the the constant. */
   std::vector<CSIConstant*> constant_;
 
-  /* for light_new */
+  /* for th1520_aot */
   std::vector<QuantParams> qinfo_list_;
 
   CSINNBMGraph bm_graph;
@@ -797,6 +781,17 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       config->nbit_activation = 16;
       config->weight_quantized_type = "sym";
       config->activate_quantized_type = "sym";
+    } else if (hybrid_quantization_scheme == "float32") {
+      config->dtype_input = "float";
+      config->dtype_weight = "float";
+      config->dtype_activation = "float";
+      config->quantization_scheme = "CSINN_QUANT_FLOAT32";
+
+      config->nbit_input = 32;
+      config->nbit_weight = 32;
+      config->nbit_activation = 32;
+      config->weight_quantized_type = "sym";
+      config->activate_quantized_type = "sym";
     } else if (hybrid_quantization_scheme == "unset") {
       config->quantization_scheme = "unset";
     } else {
@@ -849,6 +844,8 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       return CSINN_DTYPE_BOOL;
     } else if (dtype == "int16_t" || dtype == "int16") {
       return CSINN_DTYPE_INT16;
+    } else if (dtype == "int64_t") {
+      return CSINN_DTYPE_INT64;
     } else {
       LOG(FATAL) << "Unsupported dtype " << dtype;
     }
@@ -1020,6 +1017,8 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       return CSINN_DTYPE_BOOL;
     } else if (dtype == "CSINN_DTYPE_INT16") {
       return CSINN_DTYPE_INT16;
+    } else if (dtype == "CSINN_DTYPE_INT64") {
+      return CSINN_DTYPE_INT64;
     } else {
       LOG(FATAL) << "Unsupported dtype " << dtype;
     }
@@ -1108,49 +1107,6 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     func_def_.PushDecl(ret);
     bm_graph.push_op(op);
     // delete op;
-  }
-
-  /*!
-   * \brief Returns dtype string
-   *
-   * \param var Var to get the dtype of
-   *
-   * \return The dtype string.
-   */
-  std::string GetDtypeString(const Var& var) {
-    auto ttype = var->checked_type().as<TensorTypeNode>();
-    ICHECK(ttype) << "Expect TensorTypeNode";
-    return GetDtypeString(ttype);
-  }
-
-  /*!
-   * \brief Returns dtype string
-   *
-   * \param ttype TensorTypeNode* to get the dtype of
-   *
-   * \return The dtype string.
-   */
-  std::string GetDtypeString(const TensorTypeNode* ttype) { return GetDtypeString(ttype->dtype); }
-
-  std::string GetDtypeString(DataType i_dtype) {
-    std::string dtype;
-    if (runtime::TypeMatch(i_dtype, kDLFloat, 32)) {
-      dtype = "float";
-    } else if (runtime::TypeMatch(i_dtype, kDLFloat, 16)) {
-      dtype = "half";
-    } else if (runtime::TypeMatch(i_dtype, kDLInt, 32)) {
-      dtype = "int32_t";
-    } else if (runtime::TypeMatch(i_dtype, kDLInt, 64)) {
-      dtype = "int64_t";
-    } else if (runtime::TypeMatch(i_dtype, kDLInt, 8)) {
-      dtype = "int8_t";
-    } else if (runtime::TypeMatch(i_dtype, kDLUInt, 8)) {
-      dtype = "uint8_t";
-    } else {
-      LOG(FATAL) << "Unsupported dtype " << i_dtype;
-    }
-
-    return dtype;
   }
 
   void GetMultiplierAndShift(double double_multiplier, int32_t* multiplier, int32_t* shift) {

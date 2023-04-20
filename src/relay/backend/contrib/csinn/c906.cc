@@ -170,7 +170,6 @@ void CodegenC906::Conv2d(const CallNode* call, string op_name) {
   params_common_setup(decl, call, op_name, params_name, attr->layer_name.c_str(),
                       "CSINN_LAYOUT_NCHW");
   end_stream(decl, op_name);
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenC906::Dense(const CallNode* call) {
@@ -210,7 +209,13 @@ void CodegenC906::Dense(const CallNode* call) {
 
   string kernel_name = "kernel_" + to_string(buf_idx_);
   auto kernel_qinfo = GetCallOPQuant(call, 1);
-  CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  // CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  if (cfg->quantization_scheme == "CSINN_QUANT_FLOAT16_W_INT8") {
+    kernel_qinfo->dtype = "int8_t";
+    CreateWeightTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  } else {
+    CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  }
 
   CSINNConstantTensor* ct = op->get_constant(0);
   if (ct->tensor->dtype == CSINN_DTYPE_FLOAT16) {
@@ -253,7 +258,6 @@ void CodegenC906::Dense(const CallNode* call) {
 
   params_common_setup(decl, call, "fullyconnected", params_name, dense_attr->layer_name.c_str());
   end_stream(decl, "fullyconnected");
-  FreeTensor(call->args[0], input_name);
 }
 
 }  // namespace csinn

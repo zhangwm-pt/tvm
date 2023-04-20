@@ -39,6 +39,7 @@ from .common import (
     hhb_ir_helper,
     HHB_IR,
     AttributeDict,
+    ensure_compiler,
 )
 
 
@@ -627,13 +628,9 @@ class HHBX86QnnCodegenIR(HHBIRBase):
 
     def save_model(self, model_path):
         """Save current module into files."""
-        contrib_dir = os.path.dirname(os.path.realpath(os.path.expanduser(__file__)))
-        source_dir = os.path.join(contrib_dir, "..", "..", "..")
-        include_path = os.path.join(source_dir, "install_nn2", "include")
-
         lib_path = os.path.join(model_path, self.lib_name)
         kwargs = {}
-        kwargs["options"] = ["-O0", "-g3", "-I" + include_path]
+        kwargs["options"] = ["-O0", "-g3"]
         logger.info("write lib to %s" % lib_path)
         self._curr_module.export_hhb_library(
             lib_path, fcompile=False, output_dir=model_path, **kwargs
@@ -657,6 +654,7 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
         self.params_name = "model.params"
         self.graph_info_name = "graph_info.bin"
         self.lib_source_name = "model.c"
+        self.intrinsic_source_name = "intrinsic.c"
         self.main_source_name = "main.c"
         self.preprocess_source_name = "process.c"
         self.preprocess_header_name = "process.h"
@@ -740,11 +738,26 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
             )
         )
 
+        if device_config["ahead_of_time"] == "intrinsic":
+            with tvm.transform.PassContext(
+                opt_level=opt_level, config={"relay.ext.csinn.options": device_config}
+            ):
+                csinn_mod = csinn.partition_for_csinn(mod, params)
+                factory = relay.build(csinn_mod, target=target, params=params)
+
+            lib = factory.get_lib()
+            self._curr_module = lib
+            lib_path = os.path.join(output_path, self.intrinsic_source_name)
+
+            logger.info("write lib source code to %s", lib_path)
+            factory.export_library(lib_path, fcompile=fcompile)
+            device_config["ahead_of_time"] = "unset"
+
         with tvm.transform.PassContext(
             opt_level=opt_level, config={"relay.ext.csinn.options": device_config}
         ):
-            mod = csinn.partition_for_csinn(mod, params)
-            factory = relay.build(mod, target=target, params=params)
+            csinn_mod = csinn.partition_for_csinn(mod, params)
+            factory = relay.build(csinn_mod, target=target, params=params)
 
         lib = factory.get_lib()
         self._curr_module = lib
@@ -766,20 +779,15 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
         input_memory_type=None,
         q_scheme=None,
         codegen_config=None,
+        hhb_gen=False,
     ):
         from .codegen_manage import (
             main_c_codegen,
-            generate_func_map,
             generate_c906_cb_reg,
             generate_rvv_cb_reg,
         )
 
-        if board == "i805":
-            dump_file_path = os.path.join(output_path, "cb_map.c")
-            logger.info("write bc map code to %s", dump_file_path)
-            generate_func_map(self.mod, board, dump_file_path)
-            return
-        elif board == "c906" and codegen_config.dynamic_cb_reg:
+        if board == "c906" and codegen_config.dynamic_cb_reg:
             dump_file_path = os.path.join(output_path, "cb_reg.c")
             logger.info("write bc reg to %s", dump_file_path)
             opks = generate_c906_cb_reg(self.mod, board, dump_file_path, q_scheme)
@@ -800,11 +808,174 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
             multithread,
             input_memory_type,
             q_scheme,
+            codegen_config.dynamic_shape,
+            hhb_gen,
         )
 
         from .codegen_manage import package_sections
 
         package_sections(board, output_path, model_save)
+
+
+def base_dir_exists(dir):
+    found_dir = os.path.abspath(dir)
+    found_dir = os.path.join(found_dir, "install_nn2/include")
+    if os.path.exists(found_dir) and os.path.isdir(found_dir):
+        return found_dir
+    else:
+        return None
+
+
+def find_base_path():
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        # for pyinstaller
+        exe_dir = os.path.dirname(os.path.realpath(sys.executable))
+    else:
+        # for source file
+        exe_dir = os.path.dirname(os.path.realpath(__file__))
+
+    source_dir = os.path.join(exe_dir, "..", "..", "..")
+    wheel_dir = os.path.join(exe_dir, "..")
+
+    if base_dir_exists(exe_dir):
+        # pyintaller
+        base_found = exe_dir
+        tvm_inc_dir = exe_dir + "/tvm/include/"
+        dlpack_inc_dir = exe_dir + "/tvm/include/dlpack/"
+        shl_dir = exe_dir + "/install_nn2/"
+        prebuilt_dir = exe_dir + "/prebuilt/"
+    elif base_dir_exists(source_dir):
+        # source code
+        base_found = source_dir
+        tvm_inc_dir = source_dir + "/include/"
+        dlpack_inc_dir = source_dir + "/3rdparty/dlpack/include/"
+        shl_dir = source_dir + "/install_nn2/"
+        prebuilt_dir = source_dir + "/thead/prebuilt/"
+    elif base_dir_exists(wheel_dir):
+        # wheel/pip
+        base_found = wheel_dir
+        tvm_inc_dir = wheel_dir + "/../tvm/include/"
+        dlpack_inc_dir = wheel_dir + "/../tvm/dlpack/include/"
+        shl_dir = wheel_dir + "/install_nn2/"
+        prebuilt_dir = wheel_dir + "/prebuilt/"
+    else:
+        raise HHBException("Cannot find the executable base dir.\n")
+
+    return base_found, shl_dir, prebuilt_dir, tvm_inc_dir, dlpack_inc_dir
+
+
+@hhb_ir_helper
+class HHBBoardBuildRuntime:
+    def __init__(self, board, work_dir, intrinsic, android=False):
+        self.work_dir = work_dir
+        self.intrinsic = intrinsic
+
+        self.cflag = " -O2 -g "
+
+        if board in ("c906", "c908", "c920", "rvm", "th1520", "hth1520"):
+            self.compiler = "riscv64-unknown-linux-gnu-gcc"
+            # check compiler version
+            compiler_version = ensure_compiler(self.compiler)
+            if compiler_version < 2.6:
+                raise HHBException("Please upgrade compiler version.\n")
+
+            self.cflag += "-mabi=lp64d "
+        elif board in ("x86_ref"):
+            self.compiler = "gcc"
+        else:
+            raise HHBException("Unsupport platform build: {}.\n".format(board))
+
+        hhb_base_dir, shl_dir, prebuilt_dir, tvm_inc_dir, dlpack_dir = find_base_path()
+
+        logger.info("HHB base dir: %s", hhb_base_dir)
+
+        self.include_dir = " -I" + shl_dir + "include " + " -I" + dlpack_dir
+
+        self.include_dir += " -I" + tvm_inc_dir + " "
+
+        self.link_flag = " -Wl,--gc-sections -L " + shl_dir + "lib/ "
+
+        if board == "th1520":
+            self.link_flag += " -Wl,-unresolved-symbols=ignore-in-shared-libs "
+            self.link_flag += " -lshl_pnna "
+        elif board == "hth1520":
+            self.link_flag += " -Wl,-unresolved-symbols=ignore-in-shared-libs "
+            self.link_flag += " -lshl_hlight "
+        elif board == "rvm":
+            self.link_flag += " -lshl_rvm -static "
+        elif board == "c906":
+            self.link_flag += " -lshl_c906 -static "
+            self.cflag += " -march=rv64gcv0p7_zfh_xtheadc "
+        elif board == "c908":
+            self.link_flag += " -lshl_c908 -static "
+        elif board == "c920":
+            self.link_flag += " -lshl_c920 -static "
+            self.cflag += " -march=rv64gcv0p7_zfh_xtheadc "
+        elif board == "x86_ref":
+            self.link_flag += " -lshl_ref_x86 "
+        else:
+            self.link_flag += " -lshl_rvv -static "
+
+        self.include_dir += " -I " + prebuilt_dir + "runtime/cmd_parse"
+        decode_dir = " -L " + prebuilt_dir + "decode/install/lib/rv"
+        if android:
+            runtime_dir = " -L " + prebuilt_dir + "runtime/riscv_android"
+        else:
+            if board in ("c906", "c908", "c920", "rvm", "th1520", "hth1520"):
+                runtime_dir = " -L " + prebuilt_dir + "runtime/riscv_linux"
+            else:
+                runtime_dir = " -L " + prebuilt_dir + "runtime/x86_linux"
+
+        if board in ("c906", "c908", "c920", "rvm", "th1520", "hth1520"):
+            self.link_flag += (
+                decode_dir + runtime_dir + " -lprebuilt_runtime -ljpeg -lpng -lz -lstdc++ -lm "
+            )
+        else:
+            self.link_flag += decode_dir + runtime_dir + " -lprebuilt_runtime -fopenmp -lm -lstdc++"
+
+    def prefix_path(self, filename):
+        return " " + self.work_dir + "/" + filename + " "
+
+    def csource_command_line(self, source_name):
+        cmd_line = (
+            self.compiler
+            + self.cflag
+            + self.include_dir
+            + " -I"
+            + self.work_dir
+            + self.prefix_path(source_name + ".c")
+            + " -c -o "
+            + self.prefix_path(source_name + ".o")
+        )
+        return cmd_line
+
+    def build_c(self):
+        cmd = self.csource_command_line("main")
+        logger.info(cmd)
+        os.system(cmd)
+        cmd = self.csource_command_line("model")
+        logger.info(cmd)
+        os.system(cmd)
+        if self.intrinsic:
+            cmd = self.csource_command_line("intrinsic")
+            logger.info(cmd)
+            os.system(cmd)
+
+    def link_elf(self):
+        cmd_line = (
+            self.compiler
+            + self.prefix_path("model.o")
+            + self.prefix_path("main.o")
+            + self.cflag
+            + " -o "
+            + self.prefix_path("hhb_runtime")
+        )
+        if self.intrinsic:
+            cmd_line += self.prefix_path("intrinsic.o")
+
+        cmd_line += self.link_flag
+        logger.info(cmd_line)
+        os.system(cmd_line)
 
 
 def guess_ir_type(file_path):

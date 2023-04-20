@@ -24,6 +24,8 @@
 
 #include <tvm/auto_scheduler/compute_dag.h>
 #include <tvm/relay/attrs/custom_op.h>
+#include <tvm/topi/nn.h>
+#include <tvm/topi/nn/softmax.h>
 
 #include <algorithm>
 #include <string>
@@ -254,6 +256,70 @@ RELAY_REGISTER_OP("cache_conv1d")
     .set_attr<TOpPattern>("TOpPattern", kOpaque);
 
 TVM_REGISTER_GLOBAL("relay.op.custom._make.cache_conv1d").set_body_typed(MakeCacheConv1d);
+
+// where_softmax operator
+bool WhereSoftmaxRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
+                     const TypeReporter& reporter) {
+  ICHECK_EQ(types.size(), 4U);
+  const auto* condition = types[0].as<TensorTypeNode>();
+  const auto* x = types[1].as<TensorTypeNode>();
+  const auto* y = types[2].as<TensorTypeNode>();
+
+  if (condition == nullptr || x == nullptr || y == nullptr) {
+    return false;
+  }
+
+  ICHECK_EQ(x->dtype, y->dtype) << "x and y must have the same dtype: " << x->dtype << " vs "
+                                << y->dtype;
+
+  auto tensor_ty_condition = GetRef<TensorType>(condition);
+  auto tensor_ty_x = GetRef<TensorType>(x);
+  auto tensor_ty_y = GetRef<TensorType>(y);
+
+  auto b_ty = ConcreteBroadcast(tensor_ty_x, tensor_ty_y, x->dtype);
+  auto ret_ty = ConcreteBroadcast(tensor_ty_condition, b_ty, b_ty->dtype);
+
+  reporter->Assign(types[3], ret_ty);
+  return true;
+}
+
+// Positional relay function to create where_softmax operator.
+Expr MakeWhereSoftmax(const Expr& condition, const Expr& x, const Expr& y, int axis) {
+  static const Op& op = Op::Get("where_softmax");
+  auto attrs = make_object<SoftmaxAttrs>();
+  attrs->axis = axis;
+  return Call(op, {condition, x, y}, Attrs(attrs), {});
+}
+
+Array<te::Tensor> WhereSoftmaxCompute(const Attrs& attrs, const Array<te::Tensor>& inputs,
+                                      const Type& out_type) {
+  const SoftmaxAttrs* param = attrs.as<SoftmaxAttrs>();
+  return {topi::nn::softmax(topi::where(inputs[0], inputs[1], inputs[2]), param->axis)};
+}
+
+TVM_REGISTER_GLOBAL("relay.op._make.where_softmax").set_body_typed(MakeWhereSoftmax);
+
+RELAY_REGISTER_OP("where_softmax")
+    .describe(R"code(
+
+Examples::
+
+  x = [[1, 2], [3, 4]]
+  y = [[5, 6], [7, 8]]
+  cond = [[0, 1], [-1, 0]]
+  axis = -1
+  where_softmax(cond, x, y) = softmax(where(cond, x, y), axis)
+
+
+)code" TVM_ADD_FILELINE)
+    .add_argument("condition", "Tensor", "Condition array")
+    .add_argument("x", "Tensor", "First array to be selected")
+    .add_argument("y", "Tensor", "Second array to be selected")
+    .set_num_inputs(3)
+    .set_support_level(4)
+    .add_type_rel("WhereSoftmax", WhereSoftmaxRel)
+    .set_attr<FTVMCompute>("FTVMCompute", WhereSoftmaxCompute)
+    .set_attr<TOpPattern>("TOpPattern", kBroadcast);
 
 }  // namespace relay
 }  // namespace tvm

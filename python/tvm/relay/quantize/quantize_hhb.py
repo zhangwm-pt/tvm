@@ -15,14 +15,25 @@
 # specific language governing permissions and limitations
 # under the License.
 # pylint: disable=invalid-name, wildcard-import, unused-wildcard-import
+# pylint: disable=not-callable
 """Automatic quantization toolkit."""
 import logging
 import os
 import tvm
 from tvm import relay
 from .csi_layout_convert import csi_layout_convert
-from .custom_fusion_pass import FuseCacheMatMul, FuseLayerNormal, TConv1dAddT
-from .custom_fusion_pass import Conv2dSqueezeAdd, FuseCacheConv1d
+from .custom_fusion_pass import (
+    FuseCacheMatMul,
+    FuseLayerNormal,
+    TConv1dAddT,
+    Conv2dSqueezeAdd,
+    FuseCacheConv1d,
+    FuseWhereSoftmax,
+    Resume4DimsMatMul,
+    FuseActivateQuantInfo,
+    fuse_input_quant_info,
+    fuse_dequantize_op,
+)
 from .convert_to_relay import convert_to_relay
 
 
@@ -41,6 +52,7 @@ from ._convert_to_csi import (
     current_csinn_config,
     csi_op,
     rename_call,
+    unify_quant_params,
 )
 
 from .auto_hybrid_quantize import DumpLayerOutput, ModelQuantizationInfo, to_json
@@ -155,6 +167,8 @@ def _check_unsupported_ops(target, model):
         "segment_sum",
         "vision.unpooling",
         "where",
+        "qnn.quantize",
+        "qnn.dequantize",
     ]
     anole_op_list = [
         "add",
@@ -198,7 +212,7 @@ def _check_unsupported_ops(target, model):
         "vision.roi_pool",
         "vision.unpooling",
     ]
-    light_op_list = [
+    th1520_op_list = [
         "add",
         "cast",
         "clip",
@@ -241,6 +255,8 @@ def _check_unsupported_ops(target, model):
         "vision.psroipooling",
         "vision.roi_pool",
         "vision.unpooling",
+        "qnn.quantize",
+        "qnn.dequantize",
     ]
 
     qnn_op_list = [
@@ -265,16 +281,13 @@ def _check_unsupported_ops(target, model):
     op_maps = {
         "x86_ref": x86_op_list,
         "anole": anole_op_list,
-        "light": light_op_list,
-        "light_new": light_op_list,
+        "th1520": th1520_op_list,
         "e907": x86_op_list,
         "c906": x86_op_list,
         "rvm": x86_op_list,
         "c908": x86_op_list,
-        "i805": x86_op_list,
-        "c860": x86_op_list,
-        "hlight": x86_op_list,
-        "asp": x86_op_list,
+        "c920": x86_op_list,
+        "hth1520": x86_op_list,
     }
 
     class GetModelOps(relay.ExprVisitor):
@@ -488,6 +501,27 @@ def convert_csinn_options(config):
     return res
 
 
+def detect_quantized_model(mod):
+    """Check whether the model is quantitative model."""
+
+    class InterHelper(relay.ExprVisitor):
+        """Internal helper class"""
+
+        def __init__(self):
+            super(InterHelper, self).__init__()
+            self.memo_map = {}
+            self.quant_schema = set()
+
+        def visit_call(self, call):
+            _ = [self.visit(arg) for arg in call.args]
+            if call.op.name == "qnn.quantize":
+                self.quant_schema.add(call.attrs.out_dtype)
+
+    ih = InterHelper()
+    ih.visit(mod["main"])
+    return ih.quant_schema
+
+
 def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
     """The quantization procedure.
 
@@ -509,8 +543,10 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
         The graph after quantization
     """
 
+    detected_quant_type = detect_quantized_model(module)
+
     curr_qconfig = current_csinn_config()
-    if target in ("light", "hlight") and curr_qconfig.quantization_scheme not in [
+    if target in ("th1520", "hth1520") and curr_qconfig.quantization_scheme not in [
         "int16_sym",
         "int8_sym",
     ]:
@@ -550,18 +586,28 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
 
     dtype_float = False
     if curr_qconfig.dtype_weight in ("float16", "bfloat16") or (
-        (target not in ("light", "hlight")) and curr_qconfig.dtype_weight == "float32"
+        (target not in ("th1520", "hth1520")) and curr_qconfig.dtype_weight == "float32"
     ):
         dtype_float = True
+
+    if curr_qconfig.quantization_scheme == "float16_w_int8":
+        dtype_float = False
 
     if curr_qconfig.convert_to_relay and quanted_model:
         convert_to_relay(module)
         quanted_model = False
 
-    if dtype_float:
+    # original relay model includes quantize/dequantize nodes.
+    orig_quantized_model = False
+    if detected_quant_type and len(detected_quant_type) == 1:
+        orig_quantized_model = True
+    if dtype_float or orig_quantized_model:
         logger.log(LOG, "Start conversion to csinn.")
         if dataset:
-            logger.log(LOG, "Ignore calibrate dataset in f16/bf16/f32 conversion.")
+            if orig_quantized_model:
+                logger.log(LOG, "Ignore calibrate dataset in quantized model.")
+            else:
+                logger.log(LOG, "Ignore calibrate dataset in f16/bf16/f32 conversion.")
         module = convert_to_csi_qnn(module, None)
         logger.debug("Converted model:")
         logger.debug(module["main"])
@@ -579,12 +625,27 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
 
     logger.log(LOG, "Start operator fusion.")
     fuse_pass = [Conv2dSqueezeAdd()]
+    if curr_qconfig.use_custom_fusion:
+        logger.warning("Using custom fusion.")
+        fuse_pass += [FuseWhereSoftmax(), Resume4DimsMatMul()]
     fuser = transform.Sequential(fuse_pass)
     module = fuser(module)
+
+    # fuse quantization info
+    if orig_quantized_model:
+        logger.log(LOG, "Fuse quantize/dequantize nodes into ops.")
+        module = FuseActivateQuantInfo()(module)
+        module = fuse_input_quant_info(module)
+        module = fuse_dequantize_op(module)
+        logger.debug(module["main"])
+
     csi_module = fuse_layer(module)
     logger.debug("Fused model:")
     logger.debug(csi_module["main"])
     logger.log(LOG, "Operator fusion completed!")
+
+    if orig_quantized_model:
+        csi_module = unify_quant_params(csi_module)
 
     csi_module = optimize_quantization(
         csi_module, curr_qconfig.broadcast_quantization, target=curr_qconfig.target

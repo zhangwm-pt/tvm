@@ -256,52 +256,6 @@ class HHBCaffeFrontend(Frontend):
         return mod, params
 
 
-class HHBKaldiFrontend(Frontend):
-    """Kaldi frontend for HHB."""
-
-    @staticmethod
-    def name():
-        return "kaldi"
-
-    @staticmethod
-    def suffixes():
-        return ["txt"]
-
-    def _check_and_get_kaldimodel(self, path):
-        """Check the imported model file whether satisfy the kaldi framework."""
-        if isinstance(path, (list, tuple)) and len(path) == 1:
-            from tvm.relay.frontend.kaldi_parse import KaldiLoader
-
-            try:
-                return relay.frontend.KaldiLoader(path[0]).load()
-            except Exception:
-                sys.stderr.write("Please input valid kaldi file: .txt\n")
-                sys.exit(-1)
-        raise HHBException("Please input valid kaldi file: .txt\n")
-
-    def load(self, path, input_name=None, input_shape=None, output_name=None):
-        kaldi_net = self._check_and_get_kaldimodel(path)
-
-        shape_dict = {}
-        dtype_dict = {}
-        if input_name and input_shape:
-            assert len(input_name) == 1, f"only need single input name, but get {input_name}"
-            assert len(input_shape) == 1, f"only need single input shape, but get {input_shape}"
-            shape_dict[input_name[0]] = input_shape[0]
-            dtype_dict[input_name[0]] = "float32"
-        else:
-            layer = kaldi_net[0]
-            if layer["token"] == "AffineTransform":
-                iname = "input"
-                shape_dict[iname] = list([1, layer["size_settings"][1]])
-                dtype_dict[iname] = "float32"
-            else:
-                raise HHBException("Please input 'input_name' and 'input_shape'.")
-        logger.debug("Parse Kaldi model and convert into Relay IR.")
-        mod, params = relay.frontend.from_kaldi(kaldi_net, shape_dict, dtype_dict)
-        return mod, params
-
-
 ALL_HHB_FRONTENDS = [
     HHBKerasFrontend,
     HHBOnnxFrontend,
@@ -309,7 +263,6 @@ ALL_HHB_FRONTENDS = [
     HHBTFLiteFrontend,
     HHBPyTorchFrontend,
     HHBCaffeFrontend,
-    HHBKaldiFrontend,
 ]
 
 

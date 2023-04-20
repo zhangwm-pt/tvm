@@ -19,7 +19,7 @@
 
 /*!
  * \file src/relay/backend/contrib/csinn/rvm.h
- * \brief The base class for rvm.
+ * \brief The base class for RISC-V matrix extension.
  */
 #ifndef TVM_RELAY_BACKEND_CONTRIB_CSINN_RVM_H_
 #define TVM_RELAY_BACKEND_CONTRIB_CSINN_RVM_H_

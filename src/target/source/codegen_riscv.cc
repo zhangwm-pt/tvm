@@ -123,6 +123,7 @@ void CodeGenRiscv::AddFunction(const PrimFunc& f) {
   a = stream.str();
   int func_scope = this->BeginScope();
   this->PrintStmt(f->body);
+
   a = stream.str();
   this->PrintFinalReturn();
   a = stream.str();
@@ -212,8 +213,13 @@ std::string CodeGenRiscv::GetBufferRef(DataType t, const BufferNode* buffer, Pri
        << "(" << ptr_cast(t) << vid << ")"
        << " + " << index_str << " / " << div_factor << ")";
   } else if (t == buffer_element_dtype) {
-    if (intrisic_vfmv_set.find(buffer) != intrisic_vfmv_set.end()) {
-      os << buffer_str << "_" << index_str;
+    if (intrisic_vfmv_set.find(index_str) != intrisic_vfmv_set.end()) {
+      auto t = intrisic_vfmv_set[index_str];
+      if (t.find(buffer) != t.end()) {
+        os << t[buffer];
+      } else {
+        os << buffer_str << "[" << index_str << "]";
+      }
     } else if (intrisic_vle_set.find(buffer) != intrisic_vle_set.end()) {
       os << buffer_str << "+" << index_str;
     } else {
@@ -529,16 +535,27 @@ void CodeGenRiscv::PrintCallExtern(Type ret_type, String global_symbol, const Ar
   std::string func = std::string(global_symbol);
   size_t arg_size = args.size();
   if (func.substr(0, 4) == "vfmv") {
-    os << "vfloat32m1_t ";
+    os << "vfloat" << func.substr(10, 4) << "_t ";
     auto* b = args.back().as<BufferLoadNode>();
     CHECK(b);
-    intrisic_vfmv_set.insert(b->buffer.get());
-    this->PrintExpr(args.back(), os);
-    os << " = ";
+    // std::ostringstream temp;
+    // std::string var_name;
+    auto index_str = PrintExpr(b->indices[0]);
+    std::string var_name = "cas_var_";
+    var_name = GetUniqueName(var_name);
+    std::unordered_map<const BufferNode*, std::string> t;
+    t[b->buffer.get()] = var_name;
+    intrisic_vfmv_set[index_str] = t;
+    os << var_name << " = ";
     arg_size--;
-  } else if (func.substr(0, 5) == "vfadd") {
+  } else if (func.substr(0, 2) == "vf") {
     if (auto* b = args[skip_first_arg].as<BufferLoadNode>()) {
-      intrisic_vfmv_set.insert(b->buffer.get());
+      auto index_str = PrintExpr(b->indices[0]);
+      if (intrisic_vfmv_set.find(index_str) != intrisic_vfmv_set.end()) {
+        auto t = intrisic_vfmv_set[index_str];
+        t[b->buffer.get()] = t.begin()->second;
+        intrisic_vfmv_set[index_str] = t;
+      }
     }
   }
   os << global_symbol << "(";
@@ -554,7 +571,6 @@ void CodeGenRiscv::PrintCallExtern(Type ret_type, String global_symbol, const Ar
 void CodeGenRiscv::VisitExpr_(const CallNode* op, std::ostream& os) {  // NOLINT(*)
   if (auto* ptr_op = op->op.as<OpNode>()) {
     auto call_op = GetRef<Op>(ptr_op);
-
     if (op->op.same_as(builtin::tvm_check_return())) {
       const CallNode* call = op->args[2].as<CallNode>();
       os << "if (";
@@ -632,7 +648,21 @@ void CodeGenRiscv::VisitExpr_(const CallNode* op, std::ostream& os) {  // NOLINT
       ICHECK(str != nullptr);
       os << "__tvm_param__" << str->value;
     } else {
-      LOG(FATAL) << "Unresolved call " << op->op;
+      auto op_node = op->op.as<OpNode>();
+      CHECK(op_node);
+      if (op_node->name == "tir.exp") {
+        os << "expf(";
+        this->PrintExpr(op->args[0], os);
+        os << ")";
+      } else if (op_node->name == "tir.pow") {
+        os << "powf(";
+        this->PrintExpr(op->args[0], os);
+        os << ", ";
+        this->PrintExpr(op->args[1], os);
+        os << ")";
+      } else {
+        LOG(FATAL) << "Unresolved call " << op->op;
+      }
     }
   } else {
     ICHECK(op->op.as<GlobalVarNode>());
@@ -860,14 +890,18 @@ void CodeGenRiscv::VisitStmt_(const LetStmtNode* op) {
     var_idmap_[op->var.get()] = value;
   } else {
     PrintIndent();
+    auto var_name = AllocVarID(op->var.get());
     if (op->var.dtype() == DataType::Handle() && handle_data_type_.count(op->var.get())) {
       PrintType(handle_data_type_.at(op->var.get()), stream);
-      stream << "* " << AllocVarID(op->var.get()) << " = (";
+      stream << "* " << var_name << " = (";
       PrintType(handle_data_type_.at(op->var.get()), stream);
       stream << "*)" << value << ";\n";
     } else {
       PrintType(op->var.dtype(), this->stream);
-      this->stream << ' ' << AllocVarID(op->var.get()) << " = " << value << ";\n";
+      this->stream << ' ' << var_name << " = " << value << ";\n";
+      if (intrisic_vfmv_set.find(value) != intrisic_vfmv_set.end()) {
+        intrisic_vfmv_set[var_name] = intrisic_vfmv_set[value];
+      }
     }
   }
   PrintStmt(op->body);

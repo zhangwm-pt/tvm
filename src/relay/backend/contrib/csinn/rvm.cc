@@ -18,8 +18,8 @@
  */
 
 /*!
- * \file src/relay/backend/contrib/csinn/rvm.cc
- * \brief Implementation of CSINN rvm codegen APIs.
+ * \file src/relay/backend/contrib/csinn/c906.cc
+ * \brief Implementation of RISC-V matrix extension codegen APIs.
  */
 
 #include "rvm.h"
@@ -33,7 +33,7 @@ namespace contrib {
 namespace csinn {
 
 CSIConstant* CodegenRVM::CastParams(CSIConstant* data, string target_dtype,
-                                     QuantParams* quant_params, bool depthwise_kernel) {
+                                    QuantParams* quant_params, bool depthwise_kernel) {
   Qinfo* q_infos = quant_params->qinfo;
   int q_size = quant_params->q_size;
 
@@ -175,7 +175,6 @@ void CodegenRVM::Conv2d(const CallNode* call, string op_name) {
   params_common_setup(decl, call, op_name, params_name, attr->layer_name.c_str(),
                       "CSINN_LAYOUT_NCHW");
   end_stream(decl, op_name);
-  FreeTensor(call->args[0], input_name);
 }
 
 }  // namespace csinn

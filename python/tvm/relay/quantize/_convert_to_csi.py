@@ -266,7 +266,7 @@ def calibration(module, dataset):
             self.quant_params[hash_call] = []
             for in_data in self.inputs:
                 data = in_data[var.name_hint]
-                new_args.append(const(data.astype("float32")))
+                new_args.append(const(data, data.dtype))
                 quant_data.append(data)
             self.outs_map[var] = new_args
             self._get_quant_params(hash_call, quant_data, ACTIVATION)
@@ -549,6 +549,9 @@ class csi_op:
             "qnn.csi.fsmn": relay.qnn.op.csi_fsmn,
             "qnn.csi.cache_matmul": relay.qnn.op.csi_cache_matmul,
             "qnn.csi.where": relay.qnn.op.csi_where,
+            "qnn.csi.where_softmax": relay.qnn.op.csi_where_softmax,
+            "qnn.csi.quantize": relay.qnn.op.csi_quantize,
+            "qnn.csi.dequantize": relay.qnn.op.csi_dequantize,
         }
 
         self.all_handle = self._get_all_handle()
@@ -975,6 +978,7 @@ def convert_to_csi_qnn(mod, quant_params):
                     "float32",
                     cts.strides,
                     cts.padding,
+                    cts.dilation,
                     cts.pool_size,
                     cts.ceil_mode,
                     cts.count_include_pad,
@@ -1034,6 +1038,7 @@ def convert_to_csi_qnn(mod, quant_params):
                     "float32",
                     cts.strides,
                     cts.padding,
+                    cts.dilation,
                     cts.pool_size,
                     cts.ceil_mode,
                     cts.layout,
@@ -1399,6 +1404,7 @@ def convert_to_csi_qnn(mod, quant_params):
                     "float32",
                     cts.strides,
                     cts.padding,
+                    cts.dilation,
                     cts.pool_size,
                     cts.ceil_mode,
                     cts.layout,
@@ -1506,13 +1512,6 @@ def convert_to_csi_qnn(mod, quant_params):
                 )
                 if [cts.a_min, cts.a_max] == [0, 6]:
                     new_call = relay.qnn.op.csi_relu6(
-                        pre_call,
-                        "float32",
-                        q_params,
-                        layer_name=get_layer_name(call, layer_index),
-                    )
-                elif cts.a_min == 0:
-                    new_call = relay.qnn.op.csi_relu(
                         pre_call,
                         "float32",
                         q_params,
@@ -1677,7 +1676,10 @@ def convert_to_csi_qnn(mod, quant_params):
                             layer_name=get_layer_name(call, layer_index),
                         )
             elif call.op.name == "cast":
-                new_call = op_args[0]
+                data = op_args[0]
+                new_call = relay.qnn.op.csi_cast(
+                    data, cts.dtype, q_params, get_layer_name(call, layer_index)
+                )
             elif call.op.name == "ceil":
                 data = op_args[0]
                 new_call = relay.qnn.op.csi_ceil(
@@ -1820,6 +1822,16 @@ def convert_to_csi_qnn(mod, quant_params):
             elif call.op.name == "take":
                 data = op_args[0]
                 indices = op_args[1]
+                if isinstance(indices, Var):
+                    ctype = indices.checked_type
+                    if ctype.dtype != "int64":
+                        indices = relay.var(indices.name_hint, shape=ctype.shape, dtype="int64")
+                elif isinstance(indices, Constant):
+                    indices_data = indices.data.asnumpy()
+                    dtype = indices_data.dtype
+                    if dtype != "int64":
+                        indices_data = indices_data.astype("int64")
+                        indices = relay.expr.const(indices_data, "int64")
                 axis = cts.axis.value if hasattr(cts.axis, "value") else cts.axis
                 new_call = relay.qnn.op.csi_take(
                     data,
@@ -1957,6 +1969,32 @@ def convert_to_csi_qnn(mod, quant_params):
             elif call.op.name == "where":
                 new_call = relay.qnn.op.csi_where(
                     *op_args,
+                    "float32",
+                    q_params,
+                    layer_name=get_layer_name(call, layer_index),
+                )
+            elif call.op.name == "qnn.quantize":
+                data = op_args[0]
+                scale = op_args[1]
+                zero_point = op_args[2]
+                new_call = relay.qnn.op.csi_quantize(
+                    data,
+                    scale,
+                    zero_point,
+                    cts.axis,
+                    cts.out_dtype,
+                    q_params,
+                    layer_name=get_layer_name(call, layer_index),
+                )
+            elif call.op.name == "qnn.dequantize":
+                data = op_args[0]
+                scale = op_args[1]
+                zero_point = op_args[2]
+                new_call = relay.qnn.op.csi_dequantize(
+                    data,
+                    scale,
+                    zero_point,
+                    cts.axis,
                     "float32",
                     q_params,
                     layer_name=get_layer_name(call, layer_index),
@@ -2563,7 +2601,7 @@ def fuse_layer(mod):
 
 
 def optimize_quantization(mod, broadcast_quantization=False, target=""):
-    """Optimize quantization for anole and light"""
+    """Optimize quantization for anole and th1520"""
 
     class OptimizeShapeCheck(relay.ExprMutator):
         """Optimize shape check layer"""
@@ -2661,8 +2699,8 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
             node.change_out[in_name] = qinfo
             self.need_change.add(node_name)
 
-        def light_qinfo_mutator(self, in2out_list, out2in_list):
-            """qinfo mutator for light"""
+        def th1520_qinfo_mutator(self, in2out_list, out2in_list):
+            """qinfo mutator for th1520"""
             for node_name, node in self.indexd_graph.items():
                 op_name = node.op_name
                 if op_name in in2out_list:
@@ -2679,7 +2717,7 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
                         for idx, in_name in enumerate(node.inputs):
                             node.attr["q_params"][idx] = node.attr["q_params"][-1]
                             in_node = self.indexd_graph[in_name]
-                            if in_node.op_name == "qnn.csi.concatenate" and self.target == "light":
+                            if in_node.op_name == "qnn.csi.concatenate" and self.target == "th1520":
                                 raise Exception("concat try to modifly pre concat out!")
                             if in_node.op_name == "qnn.csi.concatenate":
                                 continue
@@ -2786,7 +2824,7 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
                         # updata inputs
                         for idx, in_name in enumerate(node.inputs):
                             in_node = self.indexd_graph[in_name]
-                            if in_node.op_name == "qnn.csi.concatenate" and self.target == "light":
+                            if in_node.op_name == "qnn.csi.concatenate" and self.target == "th1520":
                                 raise Exception("concat try to modifly pre concat out!")
                             if in_node.op_name == "qnn.csi.concatenate":
                                 continue
@@ -2874,62 +2912,16 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
                 if in_changed and out_changed:
                     raise Exception("Input and output qinfo can't be changed at the same time.")
 
-        def asp_qinfo_mutator(self, in2out_list, out2in_list):
-            """qinfo mutator for asp"""
-
-            for node_name, node in self.indexd_graph.items():
-                op_name = node.op_name
-
-                if op_name in in2out_list:
-                    if node.attr["q_params"][0] == node.attr["q_params"][-1]:
-                        continue
-                    node.attr["q_params"][-1] = node.attr["q_params"][0]
-                    for out_name in node.outputs:
-                        self.update_node_in(out_name, node.name, node.attr["q_params"][-1])
-
-            while self.need_change:
-                node_name = self.need_change.pop()
-                node = self.indexd_graph[node_name]
-                in_changed = False
-                out_changed = False
-                if len(node.change_out) > 1:
-                    if node.op_name != "qnn.csi.split":
-                        raise Exception(
-                            "Multiple nodes attempt to modify the current node at the same time！"
-                        )
-                if node.change_in:
-                    for in_node_name, qinfo in node.change_in.items():
-                        in_idx = node.get_input_idx(in_node_name)
-                        node.attr["q_params"][in_idx] = qinfo
-                    in_changed = True
-                    node.change_in.clear()
-
-                if node.change_out:
-                    if node.op_name not in in2out_list:
-                        for _, qinfo in node.change_out.items():
-                            node.attr["q_params"][-1] = qinfo
-                            break
-                        # updat outputs
-                        for out_name in node.outputs:
-                            self.update_node_in(out_name, node.name, node.attr["q_params"][-1])
-                            out_changed = True
-                    node.change_out.clear()
-
-                if in_changed and out_changed:
-                    raise Exception("Input and output qinfo can't be changed at the same time.")
-
         def qinfo_exchange(self, in2out_list, out2in_list, target):
             """change node quant params"""
             in2out_list = ["qnn.csi." + op for op in in2out_list]
             out2in_list = ["qnn.csi." + op for op in out2in_list]
-            if target == "light":
-                self.light_qinfo_mutator(in2out_list, out2in_list)
+            if target == "th1520":
+                self.th1520_qinfo_mutator(in2out_list, out2in_list)
             elif target == "anole":
                 self.anole_qinfo_mutator(in2out_list, out2in_list)
-            elif target == "asp":
-                self.asp_qinfo_mutator(in2out_list, out2in_list)
             else:
-                self.light_qinfo_mutator(in2out_list, out2in_list)
+                self.th1520_qinfo_mutator(in2out_list, out2in_list)
 
     class UpdataQparams(relay.ExprMutator):
         """update attr for layers"""
@@ -2997,7 +2989,7 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
             logger.warning("Broadcast optimize pass not suit for anole with channel quantization.")
             return mod
 
-        if target in ["light", "x86_ref", "hlight"]:
+        if target in ["th1520", "x86_ref", "hth1520"]:
             out2in_list = ["concatenate"]
             in2out_list = [
                 "reshape",
@@ -3010,14 +3002,12 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
                 "maxpool2d",
                 "global_avgpool2d",
                 "global_maxpool2d",
+                "strided_slice",
             ]
             mod["main"] = InsertAddBeforeConcat(out2in_list + in2out_list).visit(mod["main"])
-        elif target in ["asp"]:
-            out2in_list = []
-            in2out_list = ["avgpool2d", "maxpool2d"]
         else:
             out2in_list = ["concatenate"]
-            in2out_list = ["transpose", "reshape", "upsampling", "maxpool2d"]
+            in2out_list = ["transpose", "reshape", "upsampling", "maxpool2d", "strided_slice"]
         index_graph_creater = CreateIndexedGraph(mod, target)
         index_graph_creater.qinfo_exchange(in2out_list, out2in_list, target)
         mod["main"] = UpdataQparams(index_graph_creater.get_graph()).visit(mod["main"])
@@ -3051,4 +3041,45 @@ def rename_call(mod, call_count):
             return new_call
 
     mod["main"] = RenameCall(call_count).visit(mod["main"])
+    return mod
+
+
+def unify_quant_params(mod):
+    """Ensure the input's quant params of current op is the same with
+    the output's quant params of previous op.
+    """
+
+    class InterHelper(relay.ExprMutator):
+        """Internal helper class"""
+
+        def visit_call(self, call):
+            op_args = [self.visit(arg) for arg in call.args]
+            new_op_attrs = _qnn_attrs(call.attrs)
+
+            for i, arg in enumerate(op_args):
+                if isinstance(arg, Call):
+                    arg_attrs = _qnn_attrs(arg.attrs)
+
+                    new_op_attrs["q_params"][i] = arg_attrs["q_params"][-1]
+                elif isinstance(arg, TupleGetItem):
+                    arg_attrs = _qnn_attrs(arg.tuple_value.attrs)
+
+                    in_num = len(arg.tuple_value.args)
+                    new_op_attrs["q_params"][i] = arg_attrs["q_params"][in_num + arg.index]
+                elif isinstance(arg, Tuple):
+                    for j in range(len(arg)):
+                        curr_node = arg.field[j]
+                        if isinstance(curr_node, Call):
+                            curr_attrs = _qnn_attrs(curr_node.attrs)
+                            new_op_attrs["q_params"][j] = curr_attrs["q_params"][-1]
+                        elif isinstance(curr_node, TupleGetItem):
+                            curr_attrs = _qnn_attrs(curr_node.attrs)
+
+                            in_num = len(arg.tuple_value.args)
+                            new_op_attrs["q_params"][j] = curr_attrs["q_params"][
+                                in_num + curr_node.index
+                            ]
+            return csi_op().all_handle[call.op.name](*op_args, **new_op_attrs)
+
+    mod["main"] = InterHelper().visit(mod["main"])
     return mod

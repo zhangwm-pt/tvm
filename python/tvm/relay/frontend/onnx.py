@@ -69,7 +69,7 @@ ONNX_DEFAULT_CONFIGS = {
     # Change this flag to False to directly convert to `nn.batch_matmul`.
     # Note that `nn.batch_matmul` with format other than NT is in experimental, it may have some
     # performance issues.
-    "use_nt_batch_matmul": True,
+    "use_nt_batch_matmul": False,
 }
 
 
@@ -299,12 +299,12 @@ def matmul_out_dtype(inputs, out_dtype):
         b_type = infer_type(inputs[1])
         # Convert to dense if the second matrix is 2d and non-dynamic
         if b_rank == 2 and not _ty.is_dynamic(b_type.checked_type):
-            if a_rank != 3:
-                a = flatten_to_nd(inputs[0], a_shape, 2)
-            else:
-                a = inputs[0]
-            b = _op.transpose(inputs[1])
-            output = _op.nn.dense(a, b, out_dtype=out_dtype)
+            # a = flatten_to_nd(inputs[0], a_shape, 2)
+            if isinstance(inputs[1], relay.Constant):
+                b_data = inputs[1].data.asnumpy()
+                inputs[1] = _expr.const(b_data.reshape([1, *b_data.shape]), b_data.dtype)
+            # output = _op.nn.dense(a, b, out_dtype=out_dtype)
+            output = _op.nn.batch_matmul(inputs[0], inputs[1], transpose_b=False)
         else:
             a = inputs[0]
             b = inputs[1]
@@ -2149,7 +2149,8 @@ class Gather(OnnxOpConverter):
         axis = attr.get("axis", 0)
         data = inputs[0]
         indices = inputs[1]
-        indices = normalize_gather_indices(data, indices, axis)
+        # hhb support negative index
+        # indices = normalize_gather_indices(data, indices, axis)
         return _op.take(data, indices, axis)
 
 

@@ -25,4 +25,6 @@ static void postprocess(void *sess, const char *filename_prefix) {
         #_save_output_stats_#
         #_free_output_data_#
     }
+    csinn_free_tensor(input);
+    csinn_free_tensor(output);
 }

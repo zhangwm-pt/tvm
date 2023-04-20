@@ -108,9 +108,6 @@ def ignore_layers_from_auto_quant(module, board):
                             ):
                                 curr_name = str(ppp_call.attrs.layer_name)
                                 self.op_lists.append(curr_name)
-            # elif call.op.name == "qnn.csi.relu" and self.board == "light":
-            #     curr_name = str(call.attrs.layer_name)
-            #     self.op_lists.append(curr_name)
             else:
                 for pre_call in call.args:
                     if isinstance(pre_call, Call):
@@ -168,33 +165,30 @@ def get_config_dict(args):
         "input_memory_type": args.codegen_config.input_memory_type,
         "output_memory_type": args.codegen_config.output_memory_type,
         "model_priority": args.codegen_config.model_priority,
-        "structed_sparsity": args.structed_sparsity,
-        "kernel_parallel": args.kernel_parallel,
         "matrix_extension_mlen": args.matrix_extension_mlen,
         "target": args.board,
         "multi_thread": args.codegen_config.multithread,
         "loss_threshold_type": args.quantize_config.loss_threshold_type,
         "from_quant_file": args.quantize_config.from_quant_file,
         "conv2d_algorithm": args.codegen_config.conv2d_algorithm,
+        "ahead_of_time": args.codegen_config.ahead_of_time,
+        "dynamic_shape": args.codegen_config.dynamic_shape,
     }
-    light_input_fix_size = args.codegen_config.light_input_fix_size
-    if len(light_input_fix_size) == 2:
-        config_dict["light_input_fix_height"] = light_input_fix_size[0]
-        config_dict["light_input_fix_width"] = light_input_fix_size[1]
-
-    if args.board == "light" and args.codegen_config.model_save == "save_only":
-        config_dict["target"] = "light_new"
+    th1520_input_fix_size = args.codegen_config.th1520_input_fix_size
+    if len(th1520_input_fix_size) == 2:
+        config_dict["th1520_input_fix_height"] = th1520_input_fix_size[0]
+        config_dict["th1520_input_fix_width"] = th1520_input_fix_size[1]
 
     if args.verbose >= 3:
         config_dict["debug_level"] = "INFO"
 
     if args.codegen_config.model_save == "save_only":
-        config_dict["h_sram_size"] = (
-            2**20 if not args.hardware_sram_size else args.hardware_sram_size
-        )
-        config_dict["h_max_groups"] = (
-            16 if not args.hardware_max_groups else args.hardware_max_groups
-        )
+        raise HHBException("Unsupport --model-save = save_only.\n")
+
+    if args.codegen_config.ahead_of_time == "intrinsic":
+        if args.quantize_config.quantization_scheme not in ["float32", "float16"]:
+            raise HHBException("--ahead-of-time intrinsic only support float32 or float16.\n")
+
     return config_dict
 
 
@@ -241,7 +235,7 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             raise HHBException("Anole only support uint8_asym\n")
         if filtered_args.quantize_config.channel_quantization:
             hhb_exit("Anole unsupport channel quantization.")
-    elif filtered_args.board == "light":
+    elif filtered_args.board == "th1520":
         new_values = {
             "num_bit_input": 8,
             "num_bit_weight": 8,
@@ -263,7 +257,7 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         if filtered_args.quantize_config.channel_quantization:
             if filtered_args.quantize_config.quantization_scheme != "int8_asym_w_sym":
                 hhb_exit(
-                    "Light channel quantization only support with int8_asym_w_sym quantization scheme."
+                    "th1520 channel quantization only support with int8_asym_w_sym quantization scheme."
                 )
         if filtered_args.quantize_config.channel_quantization:
             new_values["calibrate_mode"] = "maxmin"
@@ -291,12 +285,12 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             filtered_args.quantize_config.quantization_scheme = "unset"
         else:
             raise HHBException(
-                f"Unsupport quantization scheme '{filtered_args.quantize_config.quantization_scheme}' on light\n"
+                f"Unsupport quantization scheme '{filtered_args.quantize_config.quantization_scheme}' on th1520\n"
             )
         if filtered_args.quantize_config.quantization_scheme in ("float16", "bfloat16"):
-            raise HHBException("Light unsupport float16 or bfloat16\n")
+            raise HHBException("th1520 unsupport float16 or bfloat16\n")
 
-    elif filtered_args.board == "hlight":
+    elif filtered_args.board == "hth1520":
         new_values = {
             "num_bit_input": 8,
             "num_bit_weight": 8,
@@ -316,49 +310,7 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         }
 
         if filtered_args.quantize_config.channel_quantization:
-            hhb_exit("HLight unsupport channel quantization.")
-    elif filtered_args.board == "asp":
-        new_values = {
-            "num_bit_input": 8,
-            "num_bit_weight": 8,
-            # "num_bit_activation": 32,
-            "dtype_input": "int8",
-            "dtype_weight": "int8",
-            "dtype_activation": "int32",
-            "calibrate_mode": "maxmin",
-            "weight_quantized_type": "sym",
-            "activate_quantized_type": "asym",
-            "weight_scale": "maxmin",
-            "fuse_conv_relu": False,
-            "fuse_relu": True,
-            # "fuse_reshape": False,
-            "fuse_mul_add_to_conv": True,
-            # "channel_quantization": False,
-            "broadcast_quantization": True,
-        }
-        # ASP only support NHWC
-        filtered_args.quantize_config.target_layout = "NHWC"
-    elif filtered_args.board == "i805":
-        new_values = {
-            "num_bit_input": 8,
-            "num_bit_weight": 8,
-            # "num_bit_activation": 32,
-            "dtype_input": "uint8",
-            "dtype_weight": "uint8",
-            "dtype_activation": "int32",
-            "calibrate_mode": "maxmin",
-            "weight_quantized_type": "asym",
-            "activate_quantized_type": "asym",
-            "weight_scale": "maxmin",
-            "fuse_conv_relu": False,
-            "fuse_relu": False,
-            # "fuse_reshape": False,
-            "fuse_mul_add_to_conv": True,
-            # "channel_quantization": False,
-            # "broadcast_quantization": False,
-        }
-        if filtered_args.quantize_config.channel_quantization:
-            hhb_exit("i805 unsupport channel quantization.")
+            hhb_exit("hth1520 unsupport channel quantization.")
     elif filtered_args.board == "e907":
         new_values = {
             "num_bit_input": 8,
@@ -420,13 +372,51 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         new_values = {
             "num_bit_input": 8,
             "num_bit_weight": 8,
+            "num_bit_activation": 32,
+            "dtype_input": "int8",
+            "dtype_weight": "int8",
+            "dtype_activation": "int32",
+            "calibrate_mode": "maxmin",
+            "weight_quantized_type": "asym",
+            "activate_quantized_type": "asym",
+            "weight_scale": "maxmin",
+            # "fuse_conv_relu": False,
+            "fuse_relu": False,
+            # "fuse_reshape": False,
+            "fuse_mul_add_to_conv": True,
+            # "channel_quantization": False,
+            # "broadcast_quantization": False,
+        }
+    elif filtered_args.board == "c920":
+        new_values = {
+            "num_bit_input": 16,
+            "num_bit_weight": 16,
             # "num_bit_activation": 32,
-            "dtype_input": "float32",
-            "dtype_weight": "float32",
-            "dtype_activation": "float32",
+            "dtype_input": "float16",
+            "dtype_weight": "float16",
+            "dtype_activation": "float16",
             "calibrate_mode": "maxmin",
             "weight_quantized_type": "sym",
             "activate_quantized_type": "sym",
+            "weight_scale": "maxmin",
+            "fuse_conv_relu": False,
+            "fuse_relu": False,
+            # "fuse_reshape": False,
+            "fuse_mul_add_to_conv": True,
+            # "channel_quantization": False,
+            # "broadcast_quantization": False,
+        }
+    elif filtered_args.board == "x86_ref":
+        new_values = {
+            "num_bit_input": 8,
+            "num_bit_weight": 8,
+            "num_bit_activation": 32,
+            "dtype_input": "int8",
+            "dtype_weight": "int8",
+            "dtype_activation": "int32",
+            # "calibrate_mode": "maxmin",
+            "weight_quantized_type": "asym",
+            "activate_quantized_type": "asym",
             "weight_scale": "maxmin",
             # "fuse_conv_relu": False,
             "fuse_relu": False,
@@ -539,6 +529,16 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         new_values["dtype_activation"] = "float16"
         new_values["activate_quantized_type"] = "sym"
         new_values["weight_quantized_type"] = "sym"
+    elif filtered_args.quantize_config.quantization_scheme == "float16_w_int8":
+        new_values["num_bit_input"] = 16
+        new_values["num_bit_weight"] = 16
+        new_values["num_bit_activation"] = 16
+        new_values["dtype_input"] = "float16"
+        # w_int8 only for matmul now
+        new_values["dtype_weight"] = "float16"
+        new_values["dtype_activation"] = "float16"
+        new_values["activate_quantized_type"] = "sym"
+        new_values["weight_quantized_type"] = "sym"
     elif filtered_args.quantize_config.quantization_scheme == "bfloat16":
         new_values["num_bit_input"] = 16
         new_values["num_bit_weight"] = 16
@@ -597,10 +597,9 @@ def set_quantize_params_by_board(filtered_args, extra=None):
     if (
         filtered_args.quantize_config.broadcast_quantization
         and filtered_args.quantize_config.fuse_relu
-        and filtered_args.board != "asp"
     ):
         raise HHBException(
-            "--broadcast-quantization and --fuse_relu can only be used simultaneously when the board is ASP.\n"
+            "--broadcast-quantization and --fuse_relu can only be used simultaneously.\n"
         )
 
 

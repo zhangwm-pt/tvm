@@ -40,14 +40,15 @@ def split_relu(call, op_args, target=""):
     new_tuple_args = []
     for i, pre_call in enumerate(op_args[0].args[0]):
         relu_attr["q_params"][0] = relu_attr["q_params"][1] = concat_attr["q_params"][i]
-        if target not in ["light", "light_new", "hlight"]:
+
+        if target not in ["th1520", "hth1520"]:
             relu_attr["q_params"][1] = [0.0 if x < 0 else x for x in relu_attr["q_params"][1]]
             concat_attr["q_params"][i] = relu_attr["q_params"][1]
         relu_attr["layer_name"] = base_name + f"_{i}" if base_name else base_name
         new_relu = relay.qnn.op.csi_relu(pre_call, **relu_attr)
         new_tuple_args.append(new_relu)
     concat_attr["layer_name"] = base_name + "_concat" if base_name else base_name
-    if target not in ["light", "light_new", "hlight"]:
+    if target not in ["th1520", "hth1520"]:
         concat_attr["q_params"][-1] = [0.0 if x < 0 else x for x in concat_attr["q_params"][-1]]
     new_concat = relay.qnn.op.csi_concatenate(Tuple(new_tuple_args), **concat_attr)
     if hasattr(call, "type_args") and len(call.type_args) >= 1:

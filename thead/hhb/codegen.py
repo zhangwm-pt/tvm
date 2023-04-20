@@ -65,19 +65,15 @@ from .core.quantization_manage import get_config_dict
 logger = logging.getLogger("HHB")
 
 
-def hhb_codegen(mod, params, hhb_config, quantized=False):
+def hhb_codegen(hhb_ir, config):
     """Codegen hhb model.
 
     Parameters
     ----------
-    mod : tvm.IRModule
-        The relay module for compilation
-    params : dict of str to tvm.nd.NDArray
-        The parameter dict to be used by relay
-    hhb_config : dict
-        The config data for hhb.You can get this config by `set_hhb_config`
-    quantized : bool
-        The flag that implies whether the model is quantized.
+    hhb_ir : HHBIRBase
+        HHB ir wrapper that holds module and params
+    config : HHBConfig
+        All config for HHB
 
     Returns
     -------
@@ -85,22 +81,26 @@ def hhb_codegen(mod, params, hhb_config, quantized=False):
         If the board is x86_ref, ret is HHBFloatCodegenIR/HHBX86QnnCodegenIR;
         otherwise, ret is None.
     """
+    mod, params = hhb_ir.get_model()
+    hhb_config = config._cmd_config
     ret = None
 
     opt_level = 3
     target_board_list = (
         "anole",
-        "light",
-        "hlight",
-        "asp",
-        "i805",
-        "c860",
+        "th1520",
+        "hth1520",
         "e907",
         "c906",
         "rvm",
         "c908",
+        "c920",
     )
     config_dict = get_config_dict(hhb_config)
+
+    quantized = False
+    if isinstance(hhb_ir, HHBQNNIR):
+        quantized = True
     if hhb_config.board == "x86_ref":
         if not quantized:
             x86_codegen_ir = HHBFloatCodegenIR()
@@ -144,6 +144,7 @@ def hhb_codegen(mod, params, hhb_config, quantized=False):
             hhb_config.quantize_config.quantization_scheme,
             hhb_config.codegen_config,
         )
+        ret = board_codegen_ir
     else:
         raise HHBException("unsupport for board: {}.\n".format(hhb_config.board))
 
@@ -214,15 +215,13 @@ def driver_codegen(args_filter: ArgumentFilter):
             raise HHBException("unsupport for IR type: {}".format(HHBIRType.TYPE2NAME[model_type]))
     elif args.board in (
         "anole",
-        "light",
-        "hlight",
-        "asp",
-        "i805",
-        "c860",
+        "th1520",
+        "hth1520",
         "e907",
         "c906",
         "rvm",
         "c908",
+        "c920",
     ):
         if model_type != HHBIRType.QNN:
             raise HHBException(
@@ -250,7 +249,7 @@ def driver_codegen(args_filter: ArgumentFilter):
         args_filter.filter_argument(all_filters, extra=extra_args)
         args = args_filter.filtered_args
 
-        light_input_fix_size = args.codegen_config.light_input_fix_size
+        th1520_input_fix_size = args.codegen_config.th1520_input_fix_size
 
         # convert to board qnn codegen ir
         board_qnn_codegen_ir = HHBBoardQnnCodegenIR()
@@ -264,17 +263,13 @@ def driver_codegen(args_filter: ArgumentFilter):
         quantize_config["h_align"] = args.hardware_alignment
         quantize_config["model_save"] = args.model_save
         quantize_config["model_priority"] = args.codegen_config.model_priority
-        quantize_config["structed_sparsity"] = args.structed_sparsity
-        quantize_config["kernel_parallel"] = args.kernel_parallel
         quantize_config["matrix_extension_mlen"] = args.matrix_extension_mlen
         quantize_config["target"] = args.board
         quantize_config["multi_thread"] = args.codegen_config.multithread
 
-        if len(light_input_fix_size) == 2:
-            quantize_config["light_input_fix_height"] = light_input_fix_size[0]
-            quantize_config["light_input_fix_width"] = light_input_fix_size[1]
-        if args.board == "light" and args.codegen_config.model_save == "save_only":
-            quantize_config["target"] = "light_new"
+        if len(th1520_input_fix_size) == 2:
+            quantize_config["th1520_input_fix_height"] = th1520_input_fix_size[0]
+            quantize_config["th1520_input_fix_width"] = th1520_input_fix_size[1]
         if args.verbose >= 3:
             quantize_config["debug_level"] = "INFO"
         if args.codegen_config.model_save == "save_only":

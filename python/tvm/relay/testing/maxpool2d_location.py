@@ -60,7 +60,14 @@ def quant_maxpool2d_location_model(pool_size, strides, padding):
 
 
 def quant_maxpool2d_argmax_model(
-    input_scale, input_zero_point, output_scale, output_zero_point, pool_size, strides, padding
+    input_scale,
+    input_zero_point,
+    output_scale,
+    output_zero_point,
+    pool_size,
+    strides,
+    dilation,
+    padding,
 ):
     """Quantize model"""
     data = relay.var("data", shape=(1, 3, 224, 224), dtype="uint8")
@@ -70,6 +77,7 @@ def quant_maxpool2d_argmax_model(
         "int32",
         strides,
         padding,
+        dilation,
         pool_size,
         ceil_mode=True,
         layout="NCHW",
@@ -163,13 +171,21 @@ def test_quant_maxpool2d_argmax():
     q_input, input_scale, input_zero_point = get_quant_data(t_input.numpy())
     pool_size = (2, 2)
     strides = (2, 2)
+    dilation = (1, 1)
     padding = (0, 0)
     torch_out, _ = fn.max_pool2d_with_indices(
         t_input, kernel_size=2, stride=2, padding=0, ceil_mode=True
     )
     _, output_scale, output_zero_point = get_quant_data(torch_out)
     q_model = quant_maxpool2d_argmax_model(
-        input_scale, input_zero_point, output_scale, output_zero_point, pool_size, strides, padding
+        input_scale,
+        input_zero_point,
+        output_scale,
+        output_zero_point,
+        pool_size,
+        strides,
+        dilation,
+        padding,
     )
     q_out = run_model(q_model, q_input)
     tvm_out = dequant_data(q_out, output_scale, output_zero_point)

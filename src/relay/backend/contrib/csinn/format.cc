@@ -98,6 +98,8 @@ string CSINNTensor::to_dtype(enum csinn_dtype_enum dtype) {
     return "CSINN_DTYPE_BOOL";
   } else if (dtype == CSINN_DTYPE_INT16) {
     return "CSINN_DTYPE_INT16";
+  } else if (dtype == CSINN_DTYPE_INT64) {
+    return "CSINN_DTYPE_INT64";
   }
   return ret;
 }
@@ -133,7 +135,7 @@ std::vector<string> CSINNTensor::serialize(size_t qoffset, size_t coffset) {
     push_str(t0);
     t0 << name << "->is_const = 1";
     push_str(t0);
-    /* TODO: special for ASP */
+
     if (tensor->mtype != CSINN_MEM_TYPE_CPU_NOT_ALIGNED) {
       t0 << name << "->mtype = " << to_mtype(tensor->mtype);
       push_str(t0);

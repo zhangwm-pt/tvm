@@ -223,13 +223,14 @@ Expr MakeQnnCSILeakyRelu(Expr data, double alpha, DataType out_dtype,
                          Array<Array<IndexExpr>> q_params, String layer_name);
 
 Expr MakeQnnCSIMaxPool(Expr data, DataType out_dtype, Array<IndexExpr> strides,
-                       Array<IndexExpr> padding, Array<IndexExpr> pool_size, bool ceil_mode,
-                       std::string layout, Array<Array<IndexExpr>> q_params, String layer_name);
+                       Array<IndexExpr> padding, Array<IndexExpr> dilation,
+                       Array<IndexExpr> pool_size, bool ceil_mode, std::string layout,
+                       Array<Array<IndexExpr>> q_params, String layer_name);
 
 Expr MakeQnnCSIAvgPool(Expr data, DataType out_dtype, Array<IndexExpr> strides,
-                       Array<IndexExpr> padding, Array<IndexExpr> pool_size, bool ceil_mode,
-                       bool count_include_pad, std::string layout, Array<Array<IndexExpr>> q_params,
-                       String layer_name);
+                       Array<IndexExpr> padding, Array<IndexExpr> dilation,
+                       Array<IndexExpr> pool_size, bool ceil_mode, bool count_include_pad,
+                       std::string layout, Array<Array<IndexExpr>> q_params, String layer_name);
 
 Expr MakeQnnCSIReshape(Expr data, Array<Integer> newshape, DataType out_dtype,
                        Array<Array<IndexExpr>> q_params, String layer_name);

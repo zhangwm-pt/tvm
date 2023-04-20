@@ -70,8 +70,9 @@ class CodeGenRiscv : public ExprFunctor<void(const PrimExpr&, std::ostream&)>,
    * \brief hardware config.
    */
 
-  std::unordered_set<const BufferNode*> intrisic_vfmv_set;
-  std::unordered_set<const BufferNode*> intrisic_vle_set;
+  std::unordered_map<std::string, std::unordered_map<const BufferNode*, std::string>>
+      intrisic_vfmv_set;
+  std::unordered_map<const BufferNode*, std::string> intrisic_vle_set;
   /*!
    * \brief Add the function to the generated module.
    * \param f The function to be compiled.

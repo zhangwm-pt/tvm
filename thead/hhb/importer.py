@@ -39,36 +39,7 @@ from .core.hhbir_manage import HHBRelayIR
 logger = logging.getLogger("HHB")
 
 
-def hhb_import(path, model_format=None, input_name=None, input_shape=None, output_name=None):
-    """Import a model from a supported framework into relay ir.
-
-    Parameters
-    ----------
-    path : str or list[str]
-        Path to a model file. There may be two files(.caffemodel, .prototxt) for Caffe model
-    model_format : str, optional
-        A string representing input model format
-    input_name : list[str], optional
-        The names of input node in the graph
-    input_shape : list[list[int]], optional
-        The shape of input node in the graph
-    output_name : list[str], optional
-        The name of output node in the graph
-
-    Returns
-    -------
-    mod : tvm.IRModule
-        The relay module for compilation
-    params : dict of str to tvm.nd.NDArray
-        The parameter dict to be used by relay
-    """
-    if isinstance(path, str):
-        path = [path]
-    mod, params = import_model(path, model_format, input_name, input_shape, output_name)
-    return mod, params
-
-
-def hhb_import_save(mod, params, output_dir="."):
+def save_imported_model(mod, params, output_dir="."):
     """Save imported model into file.
 
     Parameters
@@ -88,6 +59,45 @@ def hhb_import_save(mod, params, output_dir="."):
 
     with open(params_path, "wb") as f:
         f.write(tvm.relay.save_param_dict(params))
+
+
+def hhb_import(
+    path, model_format=None, input_name=None, input_shape=None, output_name=None, save_to_dir=None
+) -> HHBRelayIR:
+    """Import a model from a supported framework into relay ir.
+
+    Parameters
+    ----------
+    path : str or list[str]
+        Path to a model file. There may be two files(.caffemodel, .prototxt) for Caffe model
+    model_format : str, optional
+        A string representing input model format
+    input_name : list[str], optional
+        The names of input node in the graph
+    input_shape : list[list[int]], optional
+        The shape of input node in the graph
+    output_name : list[str], optional
+        The name of output node in the graph
+    save_to_dir : str, optional
+        save model into specified directory
+
+    Returns
+    -------
+    relay_ir : HHBRelayIR
+        Relay ir wrapper that holds module and params
+    """
+    if isinstance(path, str):
+        path = [path]
+    mod, params = import_model(path, model_format, input_name, input_shape, output_name)
+
+    if save_to_dir is not None:
+        save_to_dir = ensure_dir(save_to_dir)
+        save_imported_model(mod, params, save_to_dir)
+
+    relay_ir = HHBRelayIR()
+    relay_ir.set_model(mod, params)
+
+    return relay_ir
 
 
 @hhb_register_parse

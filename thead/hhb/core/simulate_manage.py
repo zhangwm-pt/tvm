@@ -17,11 +17,16 @@
 # pylint: disable=unnecessary-comprehension
 """Manage simulate"""
 import os
+import logging
 
 import numpy as np
 
 from .preprocess_manage import DatasetLoader
 from .common import print_top5, ensure_dir
+
+# pylint: disable=invalid-name
+LOG = 25
+logger = logging.getLogger("HHB")
 
 
 def inference_model(graph_module, data_loader: DatasetLoader, postprocess="top5", output_dir="."):
@@ -69,4 +74,44 @@ def inference_model(graph_module, data_loader: DatasetLoader, postprocess="top5"
                 np.savetxt(
                     os.path.join(output_dir, output_prefix), out, delimiter="\n", newline="\n"
                 )
+        index += 1
+
+
+def inference_elf(elf_file, dataset, input_name_list, all_file_path, output_dir="."):
+    """Inference elf on x86 by specified data loader
+
+    Parameters
+    ----------
+    elf: str
+        elf file that build to execute the graph.
+
+    data_loader: DatasetLoader
+        Data loader machine that can load specified data.
+
+    postprocess: Optional[str]
+        How to deal with output data:
+        "top5": print the top5 values of outputs;
+        "save": save the output values into file;
+        "save_and_top5": print the top5 values and save the values into file.
+
+    """
+    command_line_base = "cd " + output_dir + "; " + elf_file + " ./hhb.bm "
+
+    index = 0
+    for data in dataset:
+        command_line = command_line_base
+        data_count = 0
+        for k in input_name_list:
+            input_name = all_file_path[index]
+            v = data[k]
+            v = v.astype("float32")
+            file = os.path.basename(input_name) + ".{}.bin".format(data_count)
+            file_path = os.path.join(output_dir, file)
+            v.tofile(file_path)
+            command_line += file + " "
+            data_count += 1
+
+        logger.log(LOG, command_line)
+        os.system(command_line)
+
         index += 1

@@ -157,13 +157,13 @@ def print_mem_total_info(info):
     )
 
 
-def profile_light_trace(trace_data, indicator, frequency):
-    """Profile trace data for light.
+def profile_th1520_trace(trace_data, indicator, frequency):
+    """Profile trace data for th1520.
 
     Parameters
     ----------
     trace_data : dict
-        Original trace data in light.
+        Original trace data in th1520.
 
     indicator : list
         Indicator type to profile.
@@ -283,7 +283,7 @@ def dump_profile_result(result, output_type, indicator, ir_type, output_dir=None
             if "mem" in indicator or "all" in indicator:
                 total_info = get_mem_total_info(result)
                 print_mem_total_info(total_info)
-        elif ir_type == "light":
+        elif ir_type == "th1520":
             if "mem" in indicator or "all" in indicator:
                 total_info = get_mem_total_info(result)
                 print_mem_total_info(total_info)

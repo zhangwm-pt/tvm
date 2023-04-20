@@ -44,41 +44,50 @@ void SHL::compiler(void) {
   }
   String device = cfg.value()->target;
   bool auto_quant = cfg.value()->auto_hybrid_quantization;
+  string ahead_of_time = cfg.value()->ahead_of_time;
 
-  if (device == "anole") {
-    CodegenAnole* builder = new CodegenAnole;
-    target_build<CodegenAnole>(builder);
-  } else if (device == "light" && !auto_quant) {
-    CodegenLight* builder = new CodegenLight;
-    target_build<CodegenLight>(builder);
-  } else if (device == "hlight" || (device == "light" && auto_quant)) {
-    CodegenHLight* builder = new CodegenHLight;
-    target_build<CodegenHLight>(builder);
-  } else if (device == "asp") {
-    CodegenASP* builder = new CodegenASP;
-    target_build<CodegenASP>(builder);
-  } else if (device == "e907") {
-    CodegenE907* builder = new CodegenE907;
-    target_build<CodegenE907>(builder);
-  } else if (device == "c906") {
-    CodegenC906* builder = new CodegenC906;
-    target_build<CodegenC906>(builder);
-  } else if (device == "rvm") {
-    CodegenRVM* builder = new CodegenRVM;
-    target_build<CodegenRVM>(builder);
-  } else if (device == "c908") {
-    CodegenC908* builder = new CodegenC908;
-    target_build<CodegenC908>(builder);
-  } else if (device == "i805") {
-    CodegenI805* builder = new CodegenI805;
-    target_build<CodegenI805>(builder);
+  if (ahead_of_time != "unset") {
+    /* Ahead of time compile */
+    if (device == "c906" || device == "c920") {
+      XuanTie_AOT* builder = new XuanTie_AOT(cfg.value()->quantization_scheme);
+      builder->compile(expr);
+      code_stream_ = builder->get_ccode();
+    } else {
+      LOG(FATAL) << "Unsupport AOT on " << device;
+    }
   } else {
-    CodegenRef* builder = new CodegenRef;
-    builder->SetExtFuncId(ext_func_id_);
-    target_build<CodegenRef>(builder);
+    /* codegen c API for JIT or interpreter */
+    if (device == "anole") {
+      CodegenAnole* builder = new CodegenAnole;
+      target_build<CodegenAnole>(builder);
+    } else if (device == "th1520" && !auto_quant) {
+      CodegenTH1520* builder = new CodegenTH1520;
+      target_build<CodegenTH1520>(builder);
+    } else if (device == "hth1520" || (device == "th1520" && auto_quant)) {
+      CodegenHTH1520* builder = new CodegenHTH1520;
+      target_build<CodegenHTH1520>(builder);
+    } else if (device == "e907") {
+      CodegenE907* builder = new CodegenE907;
+      target_build<CodegenE907>(builder);
+    } else if (device == "c906") {
+      CodegenC906* builder = new CodegenC906;
+      target_build<CodegenC906>(builder);
+    } else if (device == "rvm") {
+      CodegenRVM* builder = new CodegenRVM;
+      target_build<CodegenRVM>(builder);
+    } else if (device == "c908") {
+      CodegenC908* builder = new CodegenC908;
+      target_build<CodegenC908>(builder);
+    } else if (device == "c920") {
+      CodegenC920* builder = new CodegenC920;
+      target_build<CodegenC920>(builder);
+    } else {
+      CodegenRef* builder = new CodegenRef;
+      builder->SetExtFuncId(ext_func_id_);
+      target_build<CodegenRef>(builder);
+    }
   }
 }
-
 }  // namespace csinn
 }  // namespace contrib
 }  // namespace relay

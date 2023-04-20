@@ -156,3 +156,44 @@ def cache_conv1d(
         out_layout,
         out_dtype,
     )
+
+
+def where_softmax(condition, x, y, axis):
+    """Selecting elements from either x or y depending on the value of the
+    condition, then compute softmax at axis.
+
+    .. note::
+        Shapes of condition, x, and y must be broadcastable to a common shape.
+        Semantics follow numpy where function
+        https://numpy.org/doc/stable/reference/generated/numpy.where.html
+
+    Parameters
+    ----------
+    condition : relay.Expr
+        Where True, yield x, otherwise yield y
+
+    x : relay.Expr
+        The first array or scalar to be selected.
+
+    y : relay.Expr
+        The second array or scalar to be selected.
+
+    axis : int
+        The axis to sum over when computing softmax.
+
+    Returns
+    -------
+    result : relay.Expr
+        The computed result.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        x = [[1, 2], [3, 4]]
+        y = [[5, 6], [7, 8]]
+        condition = [[0, 1], [-1, 0]]
+        axis = -1
+        where_softmax(conditon, x, y, axis) = softmax(where(conditon, x, y), axis)
+    """
+    return _make.where_softmax(condition, x, y, axis)

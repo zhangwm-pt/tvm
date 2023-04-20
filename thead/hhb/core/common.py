@@ -24,6 +24,7 @@ import yaml
 import logging
 import collections
 import sys
+import subprocess
 
 import numpy as np
 
@@ -40,8 +41,8 @@ logger = logging.getLogger("HHB")
 
 def hhb_version():
     """Version information"""
-    __version__ = "2.1.x"
-    __build_time__ = "20220711"
+    __version__ = "2.2.0"
+    __build_time__ = "20230209"
     return "HHB version: " + __version__ + ", build " + __build_time__
 
 
@@ -189,20 +190,36 @@ def ensure_dir(directory):
     return directory
 
 
+def ensure_compiler(command):
+    """Call compiler command, and return version
+
+    Parameters
+    ----------
+
+    command : str
+        command to call
+    """
+    cmd_line = [command, "-v"]
+    cmd_output = subprocess.check_output(cmd_line, stderr=subprocess.STDOUT)
+    output_str = cmd_output.decode()
+    if "command not found" in output_str:
+        raise HHBException("Cannot find compiler.\n{}".format(output_str))
+    # only for gcc
+    version_index = output_str.find("gcc Toolchain") + 15
+    version_str = output_str[version_index : version_index + 3]
+    if version_str:
+        return float(version_str)
+    return 0
+
+
 def get_target(board):
     """Get the target info accorrding to the board type."""
     if board == "anole":
         target = "c -device=anole"
-    elif board == "light":
-        target = "c -device=light"
-    elif board == "hlight":
-        target = "c -device=hlight"
-    elif board == "asp":
-        target = "c -device=asp"
-    elif board == "i805":
-        target = "c -device=i805"
-    elif board == "c860":
-        target = "c -device=c860"
+    elif board == "th1520":
+        target = "c -device=th1520"
+    elif board == "hth1520":
+        target = "c -device=hth1520"
     elif board == "e907":
         target = "c -device=e907"
     elif board == "c906":
@@ -211,6 +228,8 @@ def get_target(board):
         target = "c -device=rvm"
     elif board == "c908":
         target = "c -device=c908"
+    elif board == "c920":
+        target = "c -device=c920"
     elif board == "x86_ref":
         target = "c"
     return target

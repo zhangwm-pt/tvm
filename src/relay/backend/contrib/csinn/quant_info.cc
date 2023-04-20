@@ -22,6 +22,9 @@
  * \brief Implementation of quant_info Pass.
  */
 
+#include <math.h>
+
+#include "data_rearrange.h"
 #include "pass.h"
 
 namespace tvm {
@@ -116,6 +119,12 @@ void QuantCalculator::GetMultiplierAndShift(double double_multiplier, int32_t* m
 void QuantCalculator::GetAsymScale(float min_value, float max_value, int bits, Qinfo* qinfo,
                                    string dtype) {
   int valid_range = std::pow(2, bits) - 1;
+
+  if (std::isinf(min_value) || std::isinf(max_value)) {
+    qinfo->scale = 1.0;
+    qinfo->zero_point = 0;
+    return;
+  }
   max_value = std::max(max_value, 0.0f);
   min_value = std::min(min_value, 0.0f);
   if (dtype == "uint8_t") {
@@ -145,7 +154,7 @@ void QuantCalculator::GetAsymScale(float min_value, float max_value, int bits, Q
     qinfo->zero_point =
         std::min(high_bound,
                  static_cast<int>(std::max(low_bound, std::round(-8 - min_value / qinfo->scale))));
-  } else if (dtype == "float") {
+  } else if (is_one_of<string>(dtype, {"float", "int64_t", "int32_t", "bool"})) {
     qinfo->scale = 1.0;
     qinfo->zero_point = 0;
   } else {
@@ -331,6 +340,20 @@ class QuantInfoMutator : public HHBExprMutator {
     return quant_calculator_->is_depthwise(ishape, kshape, group, target_layout);
   }
 
+  void change_dtype(Expr call, struct QuantParams* quant_params) {
+    auto str_dtype = GetDtypeString(call->hhb_expr_extend_->dtype);
+    if (is_one_of<string>(str_dtype, {"bool", "int32_t", "int64_t"})) {
+      quant_params->dtype = str_dtype;
+    }
+  }
+
+  void change_dtype(const CallNode* call, struct QuantParams* quant_params) {
+    auto str_dtype = GetDtypeString(call->hhb_expr_extend_->dtype);
+    if (is_one_of<string>(str_dtype, {"bool", "int32_t", "int64_t"})) {
+      quant_params->dtype = str_dtype;
+    }
+  }
+
   /* single input single output */
   template <typename T>
   Expr SisoOp(const CallNode* call) {
@@ -346,9 +369,12 @@ class QuantInfoMutator : public HHBExprMutator {
 
     auto input_quant =
         GetQuantParams(get_quant_params_expr(attr->q_params, 0), call->get_quant_config(), "input");
+    change_dtype(call->args[0], input_quant);
     ret.push_op_quant(input_quant);
+
     auto output_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 1),
                                        call->get_quant_config(), "output");
+    change_dtype(call, output_quant);
     ret.push_op_quant(output_quant);
     ret.set_quant_config(call->get_quant_config());
 
@@ -371,12 +397,16 @@ class QuantInfoMutator : public HHBExprMutator {
 
     auto input0_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 0),
                                        call->get_quant_config(), "input0");
+    change_dtype(call->args[0], input0_quant);
     ret.push_op_quant(input0_quant);
     auto input1_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 1),
                                        call->get_quant_config(), "input1");
+
+    change_dtype(call->args[1], input1_quant);
     ret.push_op_quant(input1_quant);
     auto output_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 2),
                                        call->get_quant_config(), "output");
+    change_dtype(call, output_quant);
     ret.push_op_quant(output_quant);
     ret.set_quant_config(call->get_quant_config());
 
@@ -399,15 +429,33 @@ class QuantInfoMutator : public HHBExprMutator {
 
     auto input0_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 0),
                                        call->get_quant_config(), "input0");
+    change_dtype(call->args[0], input0_quant);
     ret.push_op_quant(input0_quant);
     auto input1_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 1),
                                        call->get_quant_config(), "input1");
+    change_dtype(call->args[1], input1_quant);
+
+    if (auto const_node = call->args[1].as<ConstantNode>()) {
+      // for where softmax
+      bool flag = const_node->data.DataType() == DataType::Float(32);
+      flag &= const_node->get_shape().size() == 0;
+      if (flag) {
+        void* data_buf_ = malloc(sizeof(float));
+        const_node->data.CopyToBytes(data_buf_, sizeof(float));
+        flag &= std::isinf(*reinterpret_cast<float*>(data_buf_));
+        input1_quant->dtype = flag ? "float" : input1_quant->dtype;
+      }
+    }
+
     ret.push_op_quant(input1_quant);
     auto input2_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 2),
                                        call->get_quant_config(), "input2");
+    change_dtype(call->args[2], input2_quant);
+
     ret.push_op_quant(input2_quant);
     auto output_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 3),
                                        call->get_quant_config(), "output");
+    change_dtype(call, output_quant);
     ret.push_op_quant(output_quant);
     ret.set_quant_config(call->get_quant_config());
 
@@ -514,7 +562,7 @@ class QuantInfoMutator : public HHBExprMutator {
     ret.push_op_quant(input0_quant);
     auto input1_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 1),
                                        call->get_quant_config(), "input1");
-    input1_quant->dtype = "int32_t";
+    change_dtype(call->args[1], input1_quant);
     ret.push_op_quant(input1_quant);
     auto output_quant = GetQuantParams(get_quant_params_expr(attr->q_params, 2),
                                        call->get_quant_config(), "output");
@@ -707,7 +755,7 @@ class QuantInfoMutator : public HHBExprMutator {
     } else if (IsOp(call, "qnn.csi.maxpool3d")) {
       ret = SisoOp<QnnCSIMaxPool3DAttrs>(call);
     } else if (IsOp(call, "qnn.csi.matmul")) {
-      ret = DisoOp<QnnCSIMatMulAttrs>(call);
+      ret = TisoOp<QnnCSIMatMulAttrs>(call);
     } else if (IsOp(call, "qnn.csi.maxpool2d")) {
       ret = SisoOp<QnnCSIMaxPool2DAttrs>(call);
     } else if (IsOp(call, "qnn.csi.maxpool2d_locat")) {
@@ -760,6 +808,8 @@ class QuantInfoMutator : public HHBExprMutator {
       ret = SisoOp<QnnCSIOneHotAttrs>(call);
     } else if (IsOp(call, "qnn.csi.where")) {
       ret = TisoOp<QnnCSIUnaryAttrs>(call);
+    } else if (IsOp(call, "qnn.csi.where_softmax")) {
+      ret = TisoOp<QnnCSIWhereSoftmaxAttrs>(call);
     } else {
       LOG(FATAL) << "Unsupported op: " << AsText(call->op, false);
     }
@@ -820,6 +870,26 @@ string get_layer_name(const Attrs& attrs) {
   } else if (auto* attr = attrs.as<QnnCSIDataConvertAttrs>()) {
     ret = attr->layer_name;
   } else if (auto* attr = attrs.as<QnnCSIConv2DAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnCSILayerNormAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnCSIMatMulAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnConcatenateAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnBinaryOpAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnCSIDenseAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnCSIWhereSoftmaxAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnCSIReshapeAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnCSITransposeAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnCSITakeAttrs>()) {
+    ret = attr->layer_name;
+  } else if (auto* attr = attrs.as<QnnCSIAxisAttrs>()) {
     ret = attr->layer_name;
   }
 
@@ -914,6 +984,7 @@ class ConvertInserterMutator : public HHBExprMutator {
       ret.push_op_quant(quant_calulator_->RecalQuantParams(call->get_op_quant(0), base_cfg_));
       ret.push_op_quant(call->get_op_quant(0));
     }
+    ret.set_quant_config(call->get_quant_config());
 
     return ret;
   }
@@ -925,7 +996,7 @@ class ConvertInserterMutator : public HHBExprMutator {
       auto new_arg = visit(arg);
       if (call->get_quant_config()->quantization_scheme != base_cfg_->quantization_scheme) {
         /* this is bybrid node */
-        if (new_arg.as<CallNode>() || new_arg.as<VarNode>()) {
+        if (new_arg.as<CallNode>()) {
           auto inserted_arg = insert_data_convert(new_arg, call);
           call_args.push_back(inserted_arg);
         } else {

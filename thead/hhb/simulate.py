@@ -35,6 +35,8 @@ from .core.arguments_manage import (
     add_common_argument,
     add_postprocess_argument,
     add_preprocess_argument,
+    add_codegen_argument,
+    add_optimize_argument,
     ArgumentFilter,
 )
 from .core.common import (
@@ -57,22 +59,21 @@ from .core.hhbir_manage import (
 )
 from .core.preprocess_manage import collect_preprocess_config, set_preprocess_params, DatasetLoader
 from .core.simulate_manage import inference_model
+from .core.codegen_manage import collect_codegen_config
 
 # pylint: disable=invalid-name
 logger = logging.getLogger("HHB")
 
 
-def hhb_runner(codgen_ir, hhb_config, quantized=False):
+def hhb_runner(codegen_ir, config):
     """Wrapper for hhb runner.
 
     Parameters
     ----------
     codegen_ir : HHBFloatCodegenIR or HHBX86QnnCodegenIR
         The codegened model.
-    hhb_config : dict
-        The config data for hhb.You can get this config by `set_hhb_config`
-    quantized : bool
-        The flag that implies whether the model is quantized.
+    config : HHBConfig
+        All config for HHB
 
     Returns
     -------
@@ -80,14 +81,17 @@ def hhb_runner(codgen_ir, hhb_config, quantized=False):
         The object that can be executed for x86_ref
 
     """
+    hhb_config = config._cmd_config
     ctx = tvm.cpu(0)
-    if not quantized:
-        m = graph_executor.GraphModule(codgen_ir.get_model()["default"](ctx))
-    else:
-        factory = codgen_ir.get_factory()
-        lib = codgen_ir.get_lib(hhb_config.output)
+    if isinstance(codegen_ir, HHBFloatCodegenIR):
+        m = graph_executor.GraphModule(codegen_ir.get_model()["default"](ctx))
+    elif isinstance(codegen_ir, HHBX86QnnCodegenIR):
+        factory = codegen_ir.get_factory()
+        lib = codegen_ir.get_lib(hhb_config.output)
         m = tvm.contrib.graph_executor.create(factory.get_graph_json(), lib, tvm.cpu(0))
         m.load_params(tvm.runtime.save_param_dict(factory.get_params()))
+    else:
+        raise HHBException("Can not create runner for {}".format(type(codegen_ir)))
 
     return m
 
@@ -125,6 +129,8 @@ def add_simulate_parser(subparsers):
     add_simulate_argument(parser)
     add_preprocess_argument(parser)
     add_postprocess_argument(parser)
+    add_optimize_argument(parser)
+    add_codegen_argument(parser)
     add_common_argument(parser)
 
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity")
@@ -141,44 +147,77 @@ def driver_simulate(args_filter: ArgumentFilter):
     model_type = guess_ir_type(args.FILE)
     logger.debug("Infer the ir type: %s in %s" % (HHBIRType.TYPE2NAME[model_type], args.FILE))
 
+    args.output = ensure_dir(args.output)
+
+    x86_codegen_ir = None
+    quantize_config = None
+    if args.board == "x86_ref":
+        if model_type == HHBIRType.RELAY:
+            # get relay ir
+            relay_ir = HHBRelayIR()
+            relay_ir.load_model(args.FILE)
+            input_module = relay_ir.get_model()
+            # convert to float codegen ir
+            float_codegen_ir = HHBFloatCodegenIR()
+            float_codegen_ir.convert(input_module, args.board, args.opt_level)
+            float_codegen_ir.save_model(args.output)
+            x86_codegen_ir = float_codegen_ir
+        elif model_type == HHBIRType.QNN:
+            # get qnn ir
+            qnn_ir = HHBQNNIR()
+            qnn_ir.load_model(args.FILE)
+            input_module = qnn_ir.get_model()
+            # convert to x86 qnn codegen ir
+            x86_qnn_codegen_ir = HHBX86QnnCodegenIR()
+            quantize_config = x86_qnn_codegen_ir.get_quant_env(
+                os.path.join(args.FILE, qnn_ir.info_file)
+            )
+            x86_qnn_codegen_ir.convert(
+                input_module, args.board, args.opt_level, args.output, quantize_config
+            )
+            x86_qnn_codegen_ir.save_model(args.output)
+            x86_codegen_ir = x86_qnn_codegen_ir
+        else:
+            raise HHBException("unsupport for IR type: {}".format(HHBIRType.TYPE2NAME[model_type]))
+    else:
+        raise HHBException("Only x86_ref support for simulation!")
+
+    if not args.simulate_data:
+        raise HHBException("Please set simulate data by --simulate-data.\n")
+
+    logger.info("get simulate data from %s", args.simulate_data)
+
+    ctx = tvm.cpu(0)
+    if model_type == HHBIRType.RELAY:
+        m = graph_executor.GraphModule(x86_codegen_ir.get_model()["default"](ctx))
+    else:
+        factory = x86_codegen_ir.get_factory()
+        lib = x86_codegen_ir.get_lib(args.output)
+        m = tvm.contrib.graph_executor.create(factory.get_graph_json(), lib, tvm.cpu(0))
+        m.load_params(tvm.runtime.save_param_dict(factory.get_params()))
+
     # filter arguments and prepare all needed args
     all_filters = [
         collect_preprocess_config,
         set_preprocess_params,
+        collect_codegen_config,
     ]
     extra_args = AttributeDict()
-
-    codegen_ir = None
-    curr_module = None
-    if model_type == HHBIRType.FLOAT_CODEGEN:
-        codegen_ir = HHBFloatCodegenIR()
-    elif model_type == HHBIRType.X86_QNN_CODEGEN:
-        codegen_ir = HHBX86QnnCodegenIR()
-    else:
-        raise HHBException(
-            "{} IR don't support for simulation.".format(HHBIRType.TYPE2NAME[model_type])
-        )
-
-    codegen_ir.load_model(args.FILE)
-    curr_module = codegen_ir.get_model()
-    info_dict = codegen_ir.info_dict
-
-    extra_args.input_shape = info_dict["input_shape_list"]
+    extra_args.input_shape = x86_codegen_ir.info_dict["input_shape_list"]
     args_filter.filter_argument(all_filters, extra=extra_args)
     args = args_filter.filtered_args
 
-    if not args.simulate_data:
-        raise HHBException("Please set simulate data by --simulate-data")
-
-    logger.info("get simulate data from %s", args.simulate_data)
+    target_layout = "NCHW"
+    if quantize_config:
+        target_layout = quantize_config["layout"]
     dl = DatasetLoader(
         args.simulate_data,
         args.preprocess_config,
-        info_dict["input_shape_list"],
-        info_dict["input_name_list"],
+        x86_codegen_ir.info_dict["input_shape_list"],
+        x86_codegen_ir.info_dict["input_name_list"],
+        target_layout=target_layout,
     )
-
-    inference_model(curr_module, dl, args.postprocess, args.output)
+    inference_model(m, dl, args.postprocess, args.output)
 
     if args.generate_config:
         args.output = ensure_dir(args.output)

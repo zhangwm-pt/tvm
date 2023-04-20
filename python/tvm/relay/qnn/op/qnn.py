@@ -1258,71 +1258,6 @@ def csi_concatenate(data, axis, q_params, layer_name=""):
     return _make.CSIConcatenate(Tuple(data), axis, q_params, layer_name)
 
 
-def csi_quantize(
-    data,
-    output_scale,
-    output_zero_point,
-    out_dtype,
-    max_values=tuple(),
-    min_values=tuple(),
-    layer_name="",
-):
-    r"""Quantize op
-    This operator takes float32 as input and produces quantized int8 or unit8 as output.
-    The input tensor can be of any shape. The output shape is the same as input shape.
-
-    Q_output = clamp((round(input_tensor/output_scale) + output_zero_point),
-                     out_dtype::min,
-                     out_dtype::max)
-
-    Parameters
-    ----------
-    data : tvm.relay.Expr
-        The input tensor to be quantized. Can be of type float32.
-    output_zero_point : int
-        The output zero_point.
-    output_scale : float
-        The output scale.
-    out_dtype : str, optional
-        The data type of the input tensor. Can be [int8, uint8]
-    Returns
-    -------
-    result : tvm.relay.Expr
-        The computed result.
-    """
-
-    return _make.CSIQuantize(
-        data, output_scale, output_zero_point, out_dtype, max_values, min_values, layer_name
-    )
-
-
-def csi_dequantize(
-    data, input_scale, input_zero_point, max_values=tuple(), min_values=tuple(), layer_name=""
-):
-    r"""Dequantize op
-    This operator takes quantized int8 and unit8 as input and produces
-    dequantized float32 as output. The output shape is the same as input shape. The input
-    tensor can be of any shape.
-
-    Parameters
-    ----------
-    data : tvm.relay.Expr
-        The input tensor to be dequantized. Can be of type [int8, uint8].
-    input_zero_point : int
-        The output zero_point.
-    input_scale : float
-        The output scale.
-    Returns
-    -------
-    result : tvm.relay.Expr
-        The computed result.
-    """
-
-    return _make.CSIDequantize(
-        data, input_scale, input_zero_point, max_values, min_values, layer_name
-    )
-
-
 def csi_conv2d(
     data,
     weight,
@@ -2706,7 +2641,16 @@ def csi_relu6(data, out_dtype, q_params, layer_name=""):
 
 
 def csi_maxpool2d(
-    data, out_dtype, strides, padding, pool_size, ceil_mode, layout, q_params, layer_name=""
+    data,
+    out_dtype,
+    strides,
+    padding,
+    dilation,
+    pool_size,
+    ceil_mode,
+    layout,
+    q_params,
+    layer_name="",
 ):
     """Quantized activation max pooling.
 
@@ -2728,6 +2672,7 @@ def csi_maxpool2d(
         out_dtype,
         list(strides),
         list(padding),
+        list(dilation),
         list(pool_size),
         ceil_mode,
         str(layout),
@@ -2737,7 +2682,16 @@ def csi_maxpool2d(
 
 
 def csi_maxpool2d_with_argmax(
-    data, out_dtype, strides, padding, pool_size, ceil_mode, layout, q_params, layer_name=""
+    data,
+    out_dtype,
+    strides,
+    padding,
+    dilation,
+    pool_size,
+    ceil_mode,
+    layout,
+    q_params,
+    layer_name="",
 ):
     """Quantized activation max pooling.
 
@@ -2755,7 +2709,16 @@ def csi_maxpool2d_with_argmax(
 
     """
     return _make.CSIMaxPool2dWithArgmax(
-        data, out_dtype, strides, padding, pool_size, ceil_mode, str(layout), q_params, layer_name
+        data,
+        out_dtype,
+        strides,
+        padding,
+        dilation,
+        pool_size,
+        ceil_mode,
+        str(layout),
+        q_params,
+        layer_name,
     )
 
 
@@ -2787,6 +2750,7 @@ def csi_avgpool2d(
     out_dtype,
     strides,
     padding,
+    dilation,
     pool_size,
     ceil_mode,
     count_include_pad,
@@ -2814,6 +2778,7 @@ def csi_avgpool2d(
         out_dtype,
         strides,
         padding,
+        dilation,
         pool_size,
         ceil_mode,
         count_include_pad,
@@ -4701,4 +4666,135 @@ def leaky_relu(x, alpha, scale, zero_point):
         alpha,
         scale,
         zero_point,
+    )
+
+
+def csi_where_softmax(
+    condition,
+    x,
+    y,
+    minus_inf,
+    axis,
+    out_dtype,
+    q_params,
+    layer_name="",
+):
+    """Selecting elements from either x or y depending on the value of the
+    condition, then compute softmax at axis.
+
+    .. note::
+        Shapes of condition, x, and y must be broadcastable to a common shape.
+        Semantics follow numpy where function
+        https://numpy.org/doc/stable/reference/generated/numpy.where.html
+
+    Parameters
+    ----------
+    condition : relay.Expr
+        Where True, yield x, otherwise yield y
+
+    x : relay.Expr
+        The first array or scalar to be selected.
+
+    y : relay.Expr
+        The second array or scalar to be selected.
+
+    axis : int
+        The axis to sum over when computing softmax.
+
+    Returns
+    -------
+    result : relay.Expr
+        The computed result.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        x = [[1, 2], [3, 4]]
+        y = [[5, 6], [7, 8]]
+        condition = [[0, 1], [-1, 0]]
+        axis = -1
+        where_softmax(conditon, x, y, axis) = softmax(where(conditon, x, y), axis)
+    """
+    return _make.CSIWhereSoftmax(condition, x, y, minus_inf, axis, out_dtype, q_params, layer_name)
+
+
+def csi_quantize(
+    data,
+    output_scale,
+    output_zero_point,
+    axis,
+    out_dtype,
+    q_params,
+    layer_name="",
+):
+    r"""Quantize op
+    This operator takes float32 as input and produces quantized int8 or unit8 as output.
+    The input tensor can be of any shape. The output shape is the same as input shape.
+
+    Q_output = clamp((round(input_tensor/output_scale) + output_zero_point),
+                     out_dtype::min,
+                     out_dtype::max)
+
+    Parameters
+    ----------
+    data : tvm.relay.Expr
+        The input tensor to be quantized. Can be of type float32.
+
+    output_scale : tvm.relay.Expr
+        The output scale.
+
+    output_zero_point : tvm.relay.Expr
+        The output zero_point.
+
+    axis : int
+        The channel axis for quantization. Default value is -1 which corresponds to the last axis.
+    out_dtype : str, optional
+        The data type of the input tensor. Can be [int8, uint8, int32]
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The computed result.
+    """
+    return _make.CSIQuantize(
+        data, output_scale, output_zero_point, axis, out_dtype, q_params, layer_name
+    )
+
+
+def csi_dequantize(
+    data,
+    input_scale,
+    input_zero_point,
+    axis,
+    out_dtype,
+    q_params,
+    layer_name="",
+):
+    r"""Dequantize op
+    This operator takes quantized int8 and unit8 as input and produces
+    dequantized float32 as output. The output shape is the same as input shape. The input
+    tensor can be of any shape.
+
+    Parameters
+    ----------
+    data : tvm.relay.Expr
+        The input tensor to be dequantized. Can be of type [int8, uint8, int32].
+
+    input_scale : tvm.relay.Expr
+        The input scale.
+
+    input_zero_point : tvm.relay.Expr
+        The input zero_point.
+
+    axis : int
+        The channel axis for quantization. Default value is -1 which corresponds to the last axis.
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The computed result.
+    """
+    return _make.CSIDequantize(
+        data, input_scale, input_zero_point, axis, out_dtype, q_params, layer_name
     )

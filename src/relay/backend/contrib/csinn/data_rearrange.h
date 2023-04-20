@@ -36,6 +36,16 @@ namespace relay {
 namespace contrib {
 namespace csinn {
 
+template <typename T>
+bool is_one_of(T target_item, std::initializer_list<T> arr) {
+  for (auto item : arr) {
+    if (item == target_item) {
+      return true;
+    }
+  }
+  return false;
+}
+
 CSIConstant* rearrange_data(CSIConstant* src_data, vector<int> shape, string src_layout,
                             string dest_layout);
 void layout_to_OxHWIx(void* dest, void* src, vector<int> shape, int align);

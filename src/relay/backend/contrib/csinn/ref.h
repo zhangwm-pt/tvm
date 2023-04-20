@@ -42,14 +42,11 @@ class CodegenRef : public CodegenCSINN {
   virtual void EmitReadParams();
   virtual void GenerateBackendCFunc(const string& func_name, const Array<Var>& args,
                                     const output_element& out);
-  virtual string JitImpl(const string& ext_func_id, const Array<Var>& args,
-                         const std::vector<output_element>& out);
-  virtual string JIT(const std::vector<output_element>& out);
+
+  void EmitHeader(void);
   virtual string get_ccode(void);
 
-  void malloc_buf(string out, int out_size);
-  void CreateMallocBuf(string name, std::vector<int> shape, string dtype);
-  void CreateTensorSessData();
+  void SessionRunMode() { func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_GRAPH;"); }
 };
 
 }  // namespace csinn

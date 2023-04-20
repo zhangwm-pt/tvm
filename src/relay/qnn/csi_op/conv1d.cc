@@ -74,7 +74,7 @@ bool QnnCSIConv1DRel(const Array<Type>& types, int num_inputs, const Attrs& attr
   if (param->kernel_size.defined() && param->channels.defined()) {
     Array<IndexExpr> wshape;
 
-    wshape = {{param->channels, dshape_ncw[1], param->kernel_size[0]}};
+    wshape = {{param->channels, indexdiv(dshape_ncw[1], param->groups), param->kernel_size[0]}};
 
     wshape = trans_kernel_layout.BackwardShape(wshape);
     channels = param->channels;

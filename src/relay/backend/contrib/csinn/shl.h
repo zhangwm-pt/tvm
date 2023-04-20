@@ -18,8 +18,8 @@
  */
 
 /*!
- * \file src/relay/backend/contrib/csinn/shl.h
- * \brief The base class for shl.
+ * \file src/relay/backend/contrib/csinn/pnna.h
+ * \brief The base class for pnna.
  */
 #ifndef TVM_RELAY_BACKEND_CONTRIB_CSINN_SHL_H_
 #define TVM_RELAY_BACKEND_CONTRIB_CSINN_SHL_H_
@@ -34,18 +34,19 @@
 #include <vector>
 
 #include "anole.h"
-#include "asp.h"
 #include "backend.h"
 #include "c906.h"
 #include "c908.h"
+#include "c920.h"
 #include "csinn.h"
 #include "e907.h"
 #include "gref.h"
-#include "hlight.h"
-#include "i805.h"
-#include "light.h"
+#include "hth1520.h"
 #include "ref.h"
 #include "rvm.h"
+#include "th1520.h"
+#include "xuantie_aot.h"
+
 namespace tvm {
 namespace relay {
 namespace contrib {

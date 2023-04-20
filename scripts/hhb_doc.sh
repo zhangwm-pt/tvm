@@ -28,6 +28,8 @@ export PYTHONPATH=$script_dir/../python
 export PYTHONPATH=$script_dir/../thead:${PYTHONPATH}
 
 cd $script_dir/../docs
-make html
+cp hhb_conf.py conf.py
+cp hhb_index.rst index.rst
+make --ignore-errors html
 # cd _build/html
 # python3 -m http.server

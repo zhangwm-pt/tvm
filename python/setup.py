@@ -174,7 +174,6 @@ if not CONDA_BUILD:
 
 setup_kwargs = {}
 
-LIB_LIST.append(os.path.join(CURRENT_DIR, "..", "install_nn2"))
 LIB_LIST.append(os.path.join(CURRENT_DIR, "..", "include"))
 LIB_LIST.append(os.path.join(CURRENT_DIR, "..", "3rdparty", "dlpack"))
 
@@ -225,7 +224,7 @@ extras_require = {
     piece: deps for piece, (_, deps) in requirements.items() if piece not in ("all", "core")
 }
 
-__version__ = "2.1.x"
+__version__ = "2.2.0"
 
 setup(
     name="hhb-tvm",

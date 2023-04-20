@@ -22,6 +22,7 @@ Python API
 .. toctree::
    :maxdepth: 2
 
+   hhb
    runtime
    ndarray
    error
@@ -48,4 +49,3 @@ Python API
    graph_executor
    topi
    vta/index
-   hhb

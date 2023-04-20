@@ -20,7 +20,7 @@ Optimize the imported model.
 """
 import logging
 import os
-import copy
+from tvm.relay.quantize.quantize_hhb import detect_quantized_model
 
 from .core.common import (
     hhb_register_parse,
@@ -63,38 +63,61 @@ from .core.preprocess_manage import collect_preprocess_config, set_preprocess_pa
 
 
 # pylint: disable=invalid-name
+LOG = 25
 logger = logging.getLogger("HHB")
 
 
-def hhb_quantize(mod, params, hhb_config, calibrate_data=None):
-    """Quantize model and convert relay ir into qnn ir.
+def save_quantized_model(mod, output_dir="."):
+    """Save quantized model into file.
 
     Parameters
     ----------
     mod : tvm.IRModule
-        The relay module for compilation
-    params : dict of str to tvm.nd.NDArray
-        The parameter dict to be used by relay
-    hhb_config : dict
-        The config data for hhb.You can get this config by `set_hhb_config`
+        The qnn module for compilation
+    output_dir : str
+        The output directory holding file.
+    """
+    mod_path = os.path.join(output_dir, "qnn.txt")
+
+    with open(mod_path, "w") as f:
+        f.write(mod.astext())
+
+
+def hhb_quantize(relay_ir: HHBRelayIR, config, calibrate_data=None, save_to_dir=None) -> HHBQNNIR:
+    """Quantize model and convert relay ir into qnn ir.
+
+    Parameters
+    ----------
+    relay_ir : HHBRelayIR
+        Relay ir wrapper that holds module and params
+    config : HHBConfig
+        All config for HHB
     calibrate_data : List[Dict[str, numpy.ndarray]]
         The calibration data for quantization. It includes batches of data.
+    save_to_dir : str, optional
+        save model into specified directory
 
     Returns
     -------
-    qnn_mod : tvm.IRModule
-        The qnn ir
+    relay_ir : HHBQNNIR
+        Qnn ir wrapper that holds module and params
     """
+    mod, params = relay_ir.get_model()
+    hhb_config = config._cmd_config
     inter_hhb_config = get_config_dict(hhb_config)
     inter_hhb_config["target"] = hhb_config.board
     inter_hhb_config["params_path"] = os.path.join(inter_hhb_config["params_path"], "qnn.params")
-    qnn_mod = quantize_model(mod, params, inter_hhb_config, calibrate_data, hhb_config.board)
+
+    qnn_ir = HHBQNNIR()
+    qnn_ir._curr_mod = quantize_model(
+        mod, params, inter_hhb_config, calibrate_data, hhb_config.board
+    )
 
     # update auto-qaunt layers
     if inter_hhb_config["auto_hybrid_quantization"]:
         update_hybrid_layer(hhb_config.quantize_config, hhb_config.output)
 
-        limited_layer = ignore_layers_from_auto_quant(qnn_mod, hhb_config.board)
+        limited_layer = ignore_layers_from_auto_quant(qnn_ir._curr_mod, hhb_config.board)
         logger.info(
             "These layers will be removed from hybrid quant list: {}".format(
                 set(hhb_config.quantize_config["hybrid_layer_name"]) & set(limited_layer)
@@ -110,23 +133,11 @@ def hhb_quantize(mod, params, hhb_config, calibrate_data=None):
                 - set(hhb_config.quantize_config.ignore_hybrid_layer)
             )
 
-    return qnn_mod
+    if save_to_dir is not None:
+        save_to_dir = ensure_dir(save_to_dir)
+        save_quantized_model(qnn_ir._curr_mod, save_to_dir)
 
-
-def hhb_quantize_save(mod, output_dir="."):
-    """Save quantized model into file.
-
-    Parameters
-    ----------
-    mod : tvm.IRModule
-        The qnn module for compilation
-    output_dir : str
-        The output directory holding file.
-    """
-    mod_path = os.path.join(output_dir, "qnn.txt")
-
-    with open(mod_path, "w") as f:
-        f.write(mod.astext())
+    return qnn_ir
 
 
 @hhb_register_parse
@@ -159,6 +170,26 @@ def driver_quantize(args_filter: ArgumentFilter):
     input_mod, input_params = relay_ir.get_model()
     input_name_list, input_shape_list, _ = get_input_info_from_relay(input_mod, input_params)
     output_shape_list, _ = get_output_info_from_relay(input_mod, input_params)
+
+    detected_quant_type = detect_quantized_model(input_mod)
+    if detected_quant_type:
+        if len(detected_quant_type) == 1:
+            detected_quant_type = detected_quant_type.pop()
+            if detected_quant_type == "uint8":
+                args.quantization_scheme = "uint8_asym"
+            elif detected_quant_type == "int8":
+                args.quantization_scheme = "int8_asym"
+            else:
+                raise HHBException("Unsupport quantization type:{}.\n".format(detected_quant_type))
+            logger.log(
+                LOG,
+                "Detect that current model has been quantized with {}, "
+                "--quantization-scheme will be overwritten to {}".format(
+                    detected_quant_type, args.quantization_scheme
+                ),
+            )
+        else:
+            logger.warning("Detect that there are multi quantization types in model.")
 
     # filter arguments and prepare all needed args
     all_filters = [

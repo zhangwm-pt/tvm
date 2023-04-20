@@ -90,16 +90,6 @@ std::map<string, uint> align_map{
     {"O32HWI32", 32},
 };
 
-template <typename T>
-bool is_one_of(T target_item, std::initializer_list<T> arr) {
-  for (auto item : arr) {
-    if (item == target_item) {
-      return true;
-    }
-  }
-  return false;
-}
-
 CSIConstant* rearrange_data(CSIConstant* src_data, vector<int> shape, string src_layout,
                             string dest_layout) {
   CHECK(is_one_of<string>(src_layout, {"OI", "1HWO", "OHWI"}));

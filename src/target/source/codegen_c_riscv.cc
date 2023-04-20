@@ -115,7 +115,7 @@ void CodeGenCRiscv::PrintType(DataType t, std::ostream& os) {  // NOLINT(*)
   if (t.is_float()) {
     switch (t.bits()) {
       case 16:
-        os << "half";
+        os << "__fp16";
         break;
       case 32:
         os << "float";
@@ -162,21 +162,18 @@ void CodeGenCRiscv::PrintType(DataType t, std::ostream& os) {  // NOLINT(*)
       return;
     }
   } else if (t.code() >= DataType::kCustomBegin) {
-    switch (t.bits()) {
-      case 8:
-        os << "int8_t";
-        break;
-      case 16:
-        os << "int16_t";
-        break;
-      case 32:
-        os << "int32_t";
-        break;
-      case 64:
-        os << "int64_t";
-        break;
-      case 128:
+    switch (t.code()) {
+      case 129:
         os << "vfloat32m1_t";
+        break;
+      case 130:
+        os << "vfloat32m2_t";
+        break;
+      case 131:
+        os << "vfloat16m1_t";
+        break;
+      case 132:
+        os << "vfloat16m1_t";
         break;
       default:
         fail = true;

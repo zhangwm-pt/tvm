@@ -49,37 +49,58 @@ bool QnnCSIMatMulRel(const Array<Type>& types, int num_inputs, const Attrs& attr
   bool transpose_a = param->transpose_a;
   bool transpose_b = param->transpose_b;
   const Array<PrimExpr>& y_shape = y->shape;
-  ICHECK(x->shape.size() == 3 && y_shape.size() == 3);
-  const PrimExpr& xb = x->shape[0];
-  const PrimExpr& xi = x->shape[transpose_a ? 2 : 1];
-  const PrimExpr& xk = x->shape[transpose_a ? 1 : 2];
-  const PrimExpr& yb = y_shape[0];
-  const PrimExpr& yk = y_shape[transpose_b ? 2 : 1];
-  const PrimExpr& yj = y_shape[transpose_b ? 1 : 2];
+  if (x->shape.size() == 3 && y_shape.size() == 3) {
+    const PrimExpr& xb = x->shape[0];
+    const PrimExpr& xi = x->shape[transpose_a ? 2 : 1];
+    const PrimExpr& xk = x->shape[transpose_a ? 1 : 2];
+    const PrimExpr& yb = y_shape[0];
+    const PrimExpr& yk = y_shape[transpose_b ? 2 : 1];
+    const PrimExpr& yj = y_shape[transpose_b ? 1 : 2];
 
-  bool is_dyn = false;
-  for (size_t i = 0; i < 3; ++i) {
-    if (x->shape[i].as<tir::AnyNode>() != nullptr || y_shape[i].as<tir::AnyNode>() != nullptr) {
-      is_dyn = true;
-      break;
+    bool is_dyn = false;
+    for (size_t i = 0; i < 3; ++i) {
+      if (x->shape[i].as<tir::AnyNode>() != nullptr || y_shape[i].as<tir::AnyNode>() != nullptr) {
+        is_dyn = true;
+        break;
+      }
     }
-  }
-  if (!is_dyn) {
-    ICHECK(reporter->AssertEQ(xb, yb) || reporter->AssertEQ(xb, 1) || reporter->AssertEQ(yb, 1))
-        << "BatchDot: batch dimensions don't match, "
-        << " x shape=" << x->shape << ", y shape=" << y_shape;
-    ICHECK(reporter->AssertEQ(xk, yk)) << "BatchDot: shapes of x and y is inconsistent, "
-                                       << " x shape=" << x->shape << ", y shape=" << y_shape;
-  }
+    if (!is_dyn) {
+      ICHECK(reporter->AssertEQ(xb, yb) || reporter->AssertEQ(xb, 1) || reporter->AssertEQ(yb, 1))
+          << "BatchDot: batch dimensions don't match, "
+          << " x shape=" << x->shape << ", y shape=" << y_shape;
+      ICHECK(reporter->AssertEQ(xk, yk)) << "BatchDot: shapes of x and y is inconsistent, "
+                                         << " x shape=" << x->shape << ", y shape=" << y_shape;
+    }
 
-  DataType out_dtype = param->out_dtype;
-  if (out_dtype.bits() == 0) {
-    out_dtype = x->dtype;
+    DataType out_dtype = param->out_dtype;
+    if (out_dtype.bits() == 0) {
+      out_dtype = x->dtype;
+    }
+    // assign output type
+    const auto& out_b =
+        xb->IsInstance<tir::AnyNode>() || yb->IsInstance<tir::AnyNode>() ? tir::Any() : max(xb, yb);
+    reporter->Assign(types[3], TensorType(Array<tvm::PrimExpr>({out_b, xi, yj}), out_dtype));
+  } else if (x->shape.size() == 4 && y_shape.size() == 4) {
+    const PrimExpr& xb = x->shape[0];
+    const PrimExpr& xc = x->shape[1];
+    const PrimExpr& xi = x->shape[transpose_a ? 3 : 2];
+    const PrimExpr& xk = x->shape[transpose_a ? 2 : 3];
+    const PrimExpr& yb = y_shape[0];
+    const PrimExpr& yc = y_shape[1];
+    const PrimExpr& yk = y_shape[transpose_b ? 3 : 2];
+    const PrimExpr& yj = y_shape[transpose_b ? 2 : 3];
+    DataType out_dtype = param->out_dtype;
+    if (out_dtype.bits() == 0) {
+      out_dtype = x->dtype;
+    }
+    const auto& out_b =
+        xb->IsInstance<tir::AnyNode>() || yb->IsInstance<tir::AnyNode>() ? tir::Any() : max(xb, yb);
+    const auto& out_c =
+        xb->IsInstance<tir::AnyNode>() || yb->IsInstance<tir::AnyNode>() ? tir::Any() : max(xc, yc);
+    reporter->Assign(types[3], TensorType(Array<tvm::PrimExpr>({out_b, out_c, xi, yj}), out_dtype));
+  } else {
+    ICHECK(0) << "shape size is not 3 or 4";
   }
-  // assign output type
-  const auto& out_b =
-      xb->IsInstance<tir::AnyNode>() || yb->IsInstance<tir::AnyNode>() ? tir::Any() : max(xb, yb);
-  reporter->Assign(types[3], TensorType(Array<tvm::PrimExpr>({out_b, xi, yj}), out_dtype));
   return true;
 }
 

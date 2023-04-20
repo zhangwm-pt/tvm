@@ -42,9 +42,9 @@ All arguments are listed as follows:
 | -in, --input-name | None | None | Set the name of input node. If '--input-name'is None, default value is 'Placeholder'. Multiple values are separated by semicolon(;). |
 | -is, --input-shape | None | None | Set the shape of input nodes. Multiple shapes are separated by semicolon(;) and the dims between shape are separated by space. |
 | -on, --output-name | None | None | Set the name of output nodes. Multiple shapes are separated by semicolon(;). |
-| --model-format | ['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe', 'kaldi'] | None | Specify input model format:['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe', 'kaldi'] |
+| --model-format | ['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe'] | None | Specify input model format:['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe'] |
 | --reorder-pixel-format | None | False | If original model's input data pixel format is rgb, then covert it to bgr;otherwise, then convert it to rgb. |
-| --board | ['anole', 'light', 'hlight', 'asp', 'i805', 'c860', "e907", 'c906', 'c908', 'x86_ref', 'unset'] | unset | Set target device, default is anole. |
+| --board | ['anole', 'th1520', "e907", 'c906', 'c908', 'c920', 'x86_ref', 'unset'] | unset | Set target device, default is anole. |
 | -cd, --calibrate-dataset | None | None | Provide with dataset for the input of model in reference step. Support dir or .npz .jpg .png .JPEG or .txt in which there are path of images. Note: only one image path in one line if .txt. |
 | --quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'bfloat16', 'float32', 'unset'] | unset | Scheme of quantization. default is unset, and select scheme by --board. |
 | --auto-hybrid-quantization | None | False | If set, quantize model automatically. |
@@ -60,8 +60,6 @@ All arguments are listed as follows:
 | --fuse-clip | None | False | Fuse clip's attr into pre layer's quantitative information. This flag is only valid when quantization is used. |
 | --fuse-zp2bias | None | False | Merge conv2d/dense zp to bias. |
 | --target-layout | ['NCHW', 'NHWC'] | NCHW | Set target layout. |
-| --structed-sparsity | ['asp4:2', 'asp4:1', 'unset'] | unset | Specify the structed sparsity scheme, default is unset. |
-| --kernel-parallel | None | 0 | Specify every layer's kernel parallel, default is 0, auto choose best parallel. |
 | -m, --data-mean | None | 0 | Set the mean value of input, multiple values are separated by space, default is 0. |
 | -s, --data-scale | None | 1 | Scale number(mul) for inputs normalization(data=img*scale), default is 1. |
 | -sv, --data-scale-div | None | 1 | Scale number(div) for inputs normalization(data=img/scale), default is 1. |
@@ -74,7 +72,7 @@ All arguments are listed as follows:
 | -sd, --simulate-data | None | None | Provide with dataset for the input of model in reference step. Support dir or .npz .jpg .png .JPEG or .txt in which there are path of images. Note: only one image path in one line if .txt. |
 | --postprocess | ['top5', 'save', 'save_and_top5'] | top5 | Set the mode of postprocess: 'top5' show top5 of output; 'save' save output to file;'save_and_top5' show top5 and save output to file. Default is top5 |
 | --model-save | ['run_only', 'save_only', 'save_and_run'] | run_only | Whether save binary graph or run only. run_only: execute model only, not save binary graph. save_only: save binary graph only. save_and_run: execute and save model. |
-| --model-priority | None | 0 | Set model priority, only for light now. 0 is lowest, 1 is medium, 2 is highest. |
+| --model-priority | None | 0 | Set model priority, only for th1520 now. 0 is lowest, 1 is medium, 2 is highest. |
 | --without-preprocess | None | False | Do not generate preprocess codes. |
 | --input-memory-type | [0, 1, 2] | None | Set the memory type for input tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --output-memory-type | [0, 1, 2] | None | Set the memory type for output tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
@@ -95,7 +93,7 @@ All arguments are listed as follows:
 | -in, --input-name | None | None | Set the name of input node. If '--input-name'is None, default value is 'Placeholder'. Multiple values are separated by semicolon(;). |
 | -is, --input-shape | None | None | Set the shape of input nodes. Multiple shapes are separated by semicolon(;) and the dims between shape are separated by space. |
 | -on, --output-name | None | None | Set the name of output nodes. Multiple shapes are separated by semicolon(;). |
-| --model-format | ['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe', 'kaldi'] | None | Specify input model format:['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe', 'kaldi'] |
+| --model-format | ['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe'] | None | Specify input model format:['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe'] |
 | --reorder-pixel-format | None | False | If original model's input data pixel format is rgb, then covert it to bgr;otherwise, then convert it to rgb. |
 | --config-file | None | None | Configue more complex parameters for executing the model. |
 | --generate-config | None | False | Generate  config file |
@@ -133,11 +131,9 @@ All arguments are listed as follows:
 | --fuse-clip | None | False | Fuse clip's attr into pre layer's quantitative information. This flag is only valid when quantization is used. |
 | --fuse-zp2bias | None | False | Merge conv2d/dense zp to bias. |
 | --target-layout | ['NCHW', 'NHWC'] | NCHW | Set target layout. |
-| --structed-sparsity | ['asp4:2', 'asp4:1', 'unset'] | unset | Specify the structed sparsity scheme, default is unset. |
-| --kernel-parallel | None | 0 | Specify every layer's kernel parallel, default is 0, auto choose best parallel. |
-| --board | ['anole', 'light', 'hlight', 'asp', 'i805', 'c860', "e907", 'c906', 'c908', 'x86_ref', 'unset'] | unset | Set target device, default is anole. |
+| --board | ['anole', 'th1520', "e907", 'c906', 'c908', 'c920', 'x86_ref', 'unset'] | unset | Set target device, default is anole. |
 | --model-save | ['run_only', 'save_only', 'save_and_run'] | run_only | Whether save binary graph or run only. run_only: execute model only, not save binary graph. save_only: save binary graph only. save_and_run: execute and save model. |
-| --model-priority | None | 0 | Set model priority, only for light now. 0 is lowest, 1 is medium, 2 is highest. |
+| --model-priority | None | 0 | Set model priority, only for th1520 now. 0 is lowest, 1 is medium, 2 is highest. |
 | --without-preprocess | None | False | Do not generate preprocess codes. |
 | --input-memory-type | [0, 1, 2] | None | Set the memory type for input tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --output-memory-type | [0, 1, 2] | None | Set the memory type for output tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
@@ -158,17 +154,15 @@ All arguments are listed as follows:
 | Arguments | choices | default | Note |
 | ------------|---------|---------| ---- |
 | -h, --help | None | None | show this help message and exit |
-| --board | ['anole', 'light', 'hlight', 'asp', 'i805', 'c860', "e907", 'c906', 'c908', 'x86_ref', 'unset'] | unset | Set target device, default is anole. |
+| --board | ['anole', 'th1520', "e907", 'c906', 'c908', 'c920', 'x86_ref', 'unset'] | unset | Set target device, default is anole. |
 | --postprocess | ['top5', 'save', 'save_and_top5'] | top5 | Set the mode of postprocess: 'top5' show top5 of output; 'save' save output to file;'save_and_top5' show top5 and save output to file. Default is top5 |
 | --model-save | ['run_only', 'save_only', 'save_and_run'] | run_only | Whether save binary graph or run only. run_only: execute model only, not save binary graph. save_only: save binary graph only. save_and_run: execute and save model. |
-| --model-priority | None | 0 | Set model priority, only for light now. 0 is lowest, 1 is medium, 2 is highest. |
+| --model-priority | None | 0 | Set model priority, only for th1520 now. 0 is lowest, 1 is medium, 2 is highest. |
 | --without-preprocess | None | False | Do not generate preprocess codes. |
 | --input-memory-type | [0, 1, 2] | None | Set the memory type for input tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --output-memory-type | [0, 1, 2] | None | Set the memory type for output tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --memory-type | [0, 1, 2] | None | Set the memory type for input and output tensors. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --dynamic-cb-reg | None | False | Emit cb_map file to reduce elf size on RTOS. |
-| --structed-sparsity | ['asp4:2', 'asp4:1', 'unset'] | unset | Specify the structed sparsity scheme, default is unset. |
-| --kernel-parallel | None | 0 | Specify every layer's kernel parallel, default is 0, auto choose best parallel. |
 | --config-file | None | None | Configue more complex parameters for executing the model. |
 | --generate-config | None | False | Generate  config file |
 | -o, --output | None | hhb_out | The directory that holds the outputs. |
@@ -210,9 +204,9 @@ All arguments are listed as follows:
 | -in, --input-name | None | None | Set the name of input node. If '--input-name'is None, default value is 'Placeholder'. Multiple values are separated by semicolon(;). |
 | -is, --input-shape | None | None | Set the shape of input nodes. Multiple shapes are separated by semicolon(;) and the dims between shape are separated by space. |
 | -on, --output-name | None | None | Set the name of output nodes. Multiple shapes are separated by semicolon(;). |
-| --model-format | ['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe', 'kaldi'] | None | Specify input model format:['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe', 'kaldi'] |
+| --model-format | ['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe'] | None | Specify input model format:['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe'] |
 | --reorder-pixel-format | None | False | If original model's input data pixel format is rgb, then covert it to bgr;otherwise, then convert it to rgb. |
-| --ir-type | ['relay', 'light'] | relay | The ir type that will be profiled, default is relay |
+| --ir-type | ['relay', 'th1520'] | relay | The ir type that will be profiled, default is relay |
 | --indicator | ['cal', 'mem', 'cycle', 'all'] | cal | Select indicator to profile, default is cal(calculation). cal: calculation, how many operations to be executed for current op. mem: memory, how many memory to be used for current op. cycle: how many cycles to execute op. all: include all indicators above. |
 | --output-type | ['json', 'binary', 'print', 'total', 'all'] | total | How to show results, default is show summary result. |
 | --npu-frequency | None | 1000000000 | NPU frequency(HZ). |

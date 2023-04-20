@@ -179,11 +179,13 @@ bool QnnCSIPool2DLocatRel(const Array<Type>& types, int num_inputs, const Attrs&
 
 // QNN Multiplication operator.
 Expr MakeQnnCSIMaxPool(Expr data, DataType out_dtype, Array<IndexExpr> strides,
-                       Array<IndexExpr> padding, Array<IndexExpr> pool_size, bool ceil_mode,
-                       std::string layout, Array<Array<IndexExpr>> q_params, String layer_name) {
+                       Array<IndexExpr> padding, Array<IndexExpr> dilation,
+                       Array<IndexExpr> pool_size, bool ceil_mode, std::string layout,
+                       Array<Array<IndexExpr>> q_params, String layer_name) {
   auto attrs = make_object<QnnCSIMaxPool2DAttrs>();
   attrs->pool_size = std::move(pool_size);
   attrs->strides = std::move(strides);
+  attrs->dilation = std::move(dilation);
   attrs->padding = std::move(padding);
   attrs->layout = std::move(layout);
   attrs->out_dtype = std::move(out_dtype);
@@ -225,12 +227,13 @@ RELAY_REGISTER_OP("qnn.csi.maxpool2d")
 TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSIMaxPool").set_body_typed(MakeQnnCSIMaxPool);
 
 Expr MakeQnnCSIMaxPool2dWithArgmax(Expr data, DataType out_dtype, Array<IndexExpr> strides,
-                                   Array<IndexExpr> padding, Array<IndexExpr> pool_size,
-                                   bool ceil_mode, std::string layout,
+                                   Array<IndexExpr> padding, Array<IndexExpr> dilation,
+                                   Array<IndexExpr> pool_size, bool ceil_mode, std::string layout,
                                    Array<Array<IndexExpr>> q_params, String layer_name) {
   auto attrs = make_object<QnnCSIMaxPool2DAttrs>();
   attrs->pool_size = std::move(pool_size);
   attrs->strides = std::move(strides);
+  attrs->dilation = std::move(dilation);
   attrs->padding = std::move(padding);
   attrs->layout = std::move(layout);
   attrs->out_dtype = std::move(out_dtype);
@@ -304,12 +307,13 @@ TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSIMaxPool2DLocat")
     .set_body_typed(MakeQnnCSIMaxPool2DLocat);
 
 Expr MakeQnnCSIAvgPool(Expr data, DataType out_dtype, Array<IndexExpr> strides,
-                       Array<IndexExpr> padding, Array<IndexExpr> pool_size, bool ceil_mode,
-                       bool count_include_pad, std::string layout, Array<Array<IndexExpr>> q_params,
-                       String layer_name) {
+                       Array<IndexExpr> padding, Array<IndexExpr> dilation,
+                       Array<IndexExpr> pool_size, bool ceil_mode, bool count_include_pad,
+                       std::string layout, Array<Array<IndexExpr>> q_params, String layer_name) {
   auto attrs = make_object<QnnCSIAvgPool2DAttrs>();
   attrs->pool_size = std::move(pool_size);
   attrs->strides = std::move(strides);
+  attrs->dilation = std::move(dilation);
   attrs->padding = std::move(padding);
   attrs->layout = std::move(layout);
   attrs->out_dtype = std::move(out_dtype);

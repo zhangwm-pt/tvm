@@ -43,8 +43,8 @@ def collect_codegen_config(filtered_args, extra=None):
     for k in ALL_ARGUMENTS_INFO["codegen"]:
         filtered_args.codegen_config[k] = filtered_args[k]
 
-    filtered_args.codegen_config.light_input_fix_size = parse_mean(
-        filtered_args.codegen_config.light_input_fix_size
+    filtered_args.codegen_config.th1520_input_fix_size = parse_mean(
+        filtered_args.codegen_config.th1520_input_fix_size
     )
 
 
@@ -113,6 +113,8 @@ def main_c_codegen(
     multithread=False,
     input_memory_type=None,
     q_scheme=None,
+    dynamic_shape=None,
+    hhb_gen=False,
 ):
     """Generate the main.c file"""
 
@@ -122,12 +124,16 @@ def main_c_codegen(
             main_file = os.path.join(execute_path, "config", "anole_multithread.tp")
         else:
             main_file = os.path.join(execute_path, "config", "anole.tp")
-    elif board in ("light", "hlight"):
-        main_file = os.path.join(execute_path, "config", "light.tp")
-    elif board in ("c906", "rvm", "c908"):
-        main_file = os.path.join(execute_path, "config", "c906.tp")
+    elif board in ("th1520", "hth1520"):
+        main_file = os.path.join(execute_path, "config", "th1520.tp")
+    elif board in ("c906", "rvm", "c908", "c920"):
+        if dynamic_shape:
+            main_file = os.path.join(execute_path, "config", "c906_cmdline.tp")
+        else:
+            main_file = os.path.join(execute_path, "config", "c906.tp")
     else:
-        main_file = os.path.join(execute_path, "config", "thead.tp")
+        without_preprocess = True
+        main_file = os.path.join(execute_path, "config", "x86_ref.tp")
 
     with open(main_file, "r") as f:
         code_str = f.read()
@@ -137,9 +143,8 @@ def main_c_codegen(
     # check options setting
     if preprocess_params.calibrate_data_format == "npz":
         without_preprocess = True
-    if board in ("asp"):
-        without_preprocess = True
-    if board != "anole" and board != "light":
+
+    if board != "anole" and board != "th1520":
         # disable_nbg = True
         model_save = "run_only"
 
@@ -151,10 +156,8 @@ def main_c_codegen(
         header_str = f.read()
     if board == "anole":
         header_str += '\n#include "shl_ovx.h"'
-    elif board in ("light", "hlight", "asp", "c906", "rvm", "c908"):
-        header_str += '\n#include "shl_ref.h"'
     else:
-        header_str += '\n#include "csi_nn.h"'
+        header_str += '\n#include "shl_ref.h"'
 
     if not without_preprocess:
         header_str += '\n#include "process.h"'
@@ -207,17 +210,11 @@ def main_c_codegen(
         function_str = function_str.replace(
             "void *csinn_(char *params);", "void *csinn_(char *params, int deviceIndex);"
         )
-    if board == "light" and model_save == "save_only":
+    if board == "th1520" and model_save == "save_only":
         function_str = function_str.replace(
             "void *csinn_(char *params);", "#define csinn_(...) NULL"
         )
     code_str = code_str.replace("#_hhb_function_decl_#", function_str)
-
-    if board == "c860":
-        csinn_args = ""
-        for i in range(len(input_shape) + len(output_shape)):
-            csinn_args += "void *data" + str(i) + ", "
-        code_str = code_str.replace("#_thead_csinn_args#", csinn_args)
 
     #######################################################################
     #
@@ -268,17 +265,17 @@ def main_c_codegen(
         postprocess_str = f.read()
 
     convert_fouput = ""
-    if board in ("light", "hlight", "asp", "c906", "rvm", "c908"):
+    if board != "anole":
         convert_fouput = "struct csinn_tensor *foutput = shl_ref_tensor_transform_f32(output);"
 
     postprocess_str = postprocess_str.replace("#_convert_fouput_#", convert_fouput)
 
     show_top5 = ""
     if "top5" in postprocess:
-        if board in ("light", "hlight", "asp", "c906", "rvm", "c908"):
-            show_top5 = "shl_show_top5(foutput, sess);"
-        else:
+        if board == "anole":
             show_top5 = "shl_ovx_show_top5(i, sess);"
+        else:
+            show_top5 = "shl_show_top5(foutput, sess);"
     postprocess_str = postprocess_str.replace("#_show_top5_stats_#", show_top5)
 
     free_anole_input_data = ""
@@ -286,11 +283,11 @@ def main_c_codegen(
     if board == "anole":
         free_anole_input_data = "free(input->data);"
         free_output_data = "free(output->data);"
-    if board in ("light", "hlight", "asp", "c906", "rvm", "c908"):
+    if board in ("th1520", "hth1520", "c906", "rvm", "c908", "c920"):
         free_output_data = "shl_ref_tensor_transform_free_f32(foutput);\n"
-        if board in ("c906", "rvm", "c908"):
+        if board in ("c906", "rvm", "c908", "c920"):
             free_output_data += " " * 8 + "if (!output->is_const) {\n"
-            free_output_data += " " * 12 + "free(output->data);\n"
+            free_output_data += " " * 12 + "shl_mem_free(output->data);\n"
             free_output_data += " " * 8 + "}"
     postprocess_str = postprocess_str.replace("#_free_anole_input_data_#", free_anole_input_data)
     postprocess_str = postprocess_str.replace("#_free_output_data_#", free_output_data)
@@ -306,13 +303,13 @@ def main_c_codegen(
             " " * 8
             + 'snprintf(filename, FILE_LENGTH, "%s_output%u_%s.txt", filename_prefix, i, shape);\n'
         )
-        if board in ("light", "hlight", "asp", "c906", "rvm", "c908"):
+        if board == "anole":
+            save_output += " " * 8 + "shl_ovx_save_output(i, filename, sess);\n"
+        else:
             save_output += " " * 8 + "int output_size = csinn_tensor_size(foutput);\n"
             save_output += (
                 " " * 8 + "save_data_to_file(filename, (float*)foutput->data, output_size);\n"
             )
-        else:
-            save_output += " " * 8 + "shl_ovx_save_output(i, filename, sess);\n"
     postprocess_str = postprocess_str.replace("#_save_output_stats_#", save_output)
     code_str = code_str.replace("#_hhb_postprocess_def_#", postprocess_str)
 
@@ -322,6 +319,11 @@ def main_c_codegen(
     #
     code_str = code_str.replace("#_input_num#", str(len(input_shape)))
     code_str = code_str.replace("#_output_num#", str(len(output_shape)))
+
+    hhb_gen_register = ""
+    if hhb_gen:
+        hhb_gen_register = "void hhb_gen_register(); hhb_gen_register();"
+    code_str = code_str.replace("#_hhb_gen_register_#", hhb_gen_register)
 
     aligned_buffer_stats = ""
     if input_memory_type and (1 in input_memory_type):
@@ -338,6 +340,7 @@ def main_c_codegen(
     code_str = code_str.replace("#_aligned_buffer_stats_#", aligned_buffer_stats)
 
     aligned_buffer_copy = ""
+    aligned_buffer_free = ""
     if input_memory_type:
         for i in range(len(input_shape)):
             if input_memory_type[i] == 1:  # cpu aligned
@@ -352,7 +355,19 @@ def main_c_codegen(
                     + str(i)
                     + "]);\n"
                 )
+                aligned_buffer_copy += " " * 8
+                aligned_buffer_copy += (
+                    "input_tensors[" + str(i) + "]->data = input_aligned[" + str(i) + "];\n"
+                )
+                aligned_buffer_free += "shl_mem_free(input_aligned[j]);"
+            else:
+                if i != 0:
+                    aligned_buffer_copy += " " * 8
+                aligned_buffer_copy += (
+                    "input_tensors[" + str(i) + "]->data = input[" + str(i) + "];\n"
+                )
     code_str = code_str.replace("#_aligned_buffer_copy_#", aligned_buffer_copy)
+    code_str = code_str.replace("#_aligned_buffer_free_#", aligned_buffer_free)
 
     get_input_data_stats = ""
     if without_preprocess:
@@ -397,18 +412,33 @@ def main_c_codegen(
 
     run_csinn_stats_anole = ""
     run_csinn_stats_thead = ""
-    for i in range(len(input_shape)):
-        if input_memory_type and input_memory_type[i] == 1:
-            run_csinn_stats_anole += "input_aligned[" + str(i) + "], "
-        else:
-            run_csinn_stats_anole += "input[" + str(i) + "], "
-        run_csinn_stats_thead += "input[" + str(i) + "], "
-    code_str = code_str.replace("#_anole_value_pass#", run_csinn_stats_anole)
+    if dynamic_shape:
+        run_csinn_stats_anole += """
+    if (option->input_number) {
+        for (int i = 0; i < option->input_number; i++) {
+            input_tensors[i] = csinn_alloc_tensor(NULL);
+            input_tensors[i]->dim_count = option->input_shape[i].dim_count;
+            for (int j = 0; j < input_tensors[i]->dim_count; j++) {
+                input_tensors[i]->dim[j] = option->input_shape[i].dims[j];
+            }
+            csinn_update_input(i, input_tensors[i], sess);
+        }
+    } else {
+        printf("Use --input-shape to set input shape\\n");
+        return 0;
+    }
+        """
+    else:
+        for i in range(len(input_shape)):
+            if i > 0:
+                run_csinn_stats_anole += "    "
+            run_csinn_stats_anole += f"input_tensors[{i}] = csinn_alloc_tensor(NULL);\n"
+            run_csinn_stats_anole += f"    input_tensors[{i}]->dim_count = {len(input_shape[i])};\n"
+            for j, s in enumerate(input_shape[i]):
+                run_csinn_stats_anole += f"    input_tensors[{i}]->dim[{j}] = {s};\n"
 
-    if board == "c860":
-        for i in range(len(output_shape)):
-            run_csinn_stats_thead += "output[" + str(i) + "], "
-        code_str = code_str.replace("#_thead_value_pass#", run_csinn_stats_thead)
+            run_csinn_stats_thead += "input[" + str(i) + "], "
+    code_str = code_str.replace("#_tensor_shape_#", run_csinn_stats_anole)
 
     logger.info("save main souce to %s", os.path.join(output_path, codegen_obj.main_source_name))
     with open(os.path.join(output_path, codegen_obj.main_source_name), "w") as f:
@@ -467,11 +497,7 @@ class VisitLayers(relay.ExprVisitor):
             kernel_shape = list(call.type_args[1].concrete_shape)
             if call.attrs.groups > 1:
                 op_name = "group_conv2d"
-                if call.attrs.out_layout == "NHWC":
-                    # for i805 NHWC layout
-                    if call.attrs.groups == in_shape[3] and kernel_shape[0] == 1:
-                        op_name = "depthwise_conv2d"
-                elif call.attrs.out_layout == "NCHW":
+                if call.attrs.out_layout == "NCHW":
                     if call.attrs.groups == in_shape[0] and kernel_shape[1] == 1:
                         op_name = "depthwise_conv2d"
         if op_name not in self.layer_kinds:
@@ -479,49 +505,6 @@ class VisitLayers(relay.ExprVisitor):
 
     def get_op_kinds(self):
         return self.layer_kinds
-
-
-def generate_func_map(model, board, dump_file_path):
-    def get_register_func(i805h_path):
-        import re
-
-        register_func = {}
-        with open(i805h_path, "r") as f:
-            for line in f:
-                match_obj = re.match(r"int shl_i805_(.*)_u8", line)
-                if match_obj:
-                    func_name = match_obj.group(1)
-                    if "init" in func_name:
-                        func_name = func_name[:-5]
-                    if func_name not in register_func:
-                        register_func[func_name] = func_name
-        return register_func
-
-    op_kinds = VisitLayers(model["main"]).get_op_kinds()
-    execute_path = get_execute_path()
-    i805h_path = os.path.join(execute_path, "../../install_nn2/include/shl_i805.h")
-    register_funcs = get_register_func(i805h_path)
-    func_file = os.path.join(execute_path, "config", "reg_rewrite", "i805.tp")
-    with open(func_file, "r") as f:
-        code_str = f.read()
-    repleased_str = ""
-    optimized_stwich_str = "\t\tcase CSINN_OP_{}:\n\t\t\treturn shl_#TARGET_{}_u8;\n\t\t\tbreak;\n"
-    ref_stwich_str = "\t\tcase CSINN_OP_{}:\n\t\t\treturn shl_ref_{}_quant;\n\t\t\tbreak;\n"
-    mem_ops = ["transpose", "resahpe", "squeeze"]
-    for op in op_kinds:
-        kind = op.split(".")[-1]
-        if kind in register_funcs:
-            repleased_str += optimized_stwich_str.format(kind.upper(), register_funcs[kind])
-        else:
-            tmp_str = ref_stwich_str.format(kind.upper(), kind.lower())
-            if kind in mem_ops:
-                tmp_str = tmp_str.replace("_quant", "")
-            repleased_str += tmp_str
-
-    code_str = code_str.replace("#OP_CASE", repleased_str)
-    code_str = code_str.replace("#TARGET", board)
-    with open(dump_file_path, "w+") as f:
-        f.write(code_str)
 
 
 def generate_c906_cb_reg(model, board, dump_file_path, q_scheme):
@@ -1227,10 +1210,10 @@ def package_sections(board, output_path, model_save):
         model_params_section = False
         binary_graph_section = True
 
-    if board == "light":
+    if board == "th1520":
         graph_info = True
 
-    if board not in ["light", "light_new"]:
+    if board not in ["th1520"]:
         model_params_section = True
         binary_graph_section = False
 

@@ -50,6 +50,7 @@ from .stft import *
 from . import generic
 from . import nn
 from . import x86
+from . import riscv
 from . import cuda
 from . import gpu
 from . import arm_cpu

@@ -288,12 +288,6 @@ runtime::DataType NDArray::DataType() const {
   return runtime::DataType(get_mutable()->dl_tensor.dtype);
 }
 
-int64_t NDArray::Length() const {
-  const DLTensor* handle = &get_mutable()->dl_tensor;
-  size_t arr_size = GetDataSize(*handle);
-  return arr_size;
-}
-
 bool NDArray::AbilityOfZeroCopyForDLTensor(DLTensor* tensor, const Device& dev) {
   bool device_check = (dev.device_type == tensor->device.device_type);
   bool device_id_check = (dev.device_id == tensor->device.device_id);

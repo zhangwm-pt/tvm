@@ -109,6 +109,43 @@ Examples::
 
 TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSIWhere").set_body_typed(MakeQnnCSIWhere);
 
+TVM_REGISTER_NODE_TYPE(QnnCSIWhereSoftmaxAttrs);
+Expr MakeQnnCSIWhereSoftmax(const Expr& condition, const Expr& x, const Expr& y, double minus_inf,
+                            int32_t axis, DataType out_dtype, Array<Array<IndexExpr>> q_params,
+                            String layer_name) {
+  auto attrs = make_object<QnnCSIWhereSoftmaxAttrs>();
+  attrs->out_dtype = out_dtype;
+  attrs->axis = axis;
+  attrs->minus_inf = minus_inf;
+  attrs->q_params = std::move(q_params);
+  attrs->layer_name = std::move(layer_name);
+
+  static const Op& op = Op::Get("qnn.csi.where_softmax");
+  return Call(op, {condition, x, y}, Attrs(attrs), {});
+}
+
+RELAY_REGISTER_OP("qnn.csi.where_softmax")
+    .describe(R"code(
+Examples::
+
+  x = -inf
+  y = [[5, 6], [7, 8]]
+  cond = [[0, 1], [-1, 0]]
+  axis = -1
+  where_softmax(cond, x, y, axis) = softmax(where(cond, x, y), axis)
+
+)code" TVM_ADD_FILELINE)
+    .set_attrs_type<QnnCSIAxisAttrs>()
+    .set_num_inputs(3)
+    .add_argument("condition", "Tensor", "Condition array")
+    .add_argument("x", "Tensor", "First array to be selected")
+    .add_argument("y", "Tensor", "Second array to be selected")
+    .set_support_level(11)
+    .add_type_rel("QnnCSIWhereSoftmaxRel", QnnCSIWhereRel)
+    .set_attr<TOpPattern>("TOpPattern", kOpaque);
+
+TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSIWhereSoftmax").set_body_typed(MakeQnnCSIWhereSoftmax);
+
 }  // namespace qnn
 }  // namespace relay
 }  // namespace tvm

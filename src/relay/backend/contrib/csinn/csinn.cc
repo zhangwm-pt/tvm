@@ -26,7 +26,7 @@
 
 #include "anole.h"
 #include "gref.h"
-#include "light.h"
+#include "th1520.h"
 
 using namespace tvm::relay::qnn;
 namespace tvm {
@@ -53,12 +53,7 @@ void CodegenCSINN::phase1() {
   }
 }
 
-void CodegenCSINN::phase2() {
-  LayerCounter layer_counter;
-  layer_counter.visit(expr_);
-  layer_count = layer_counter.GetLayerCounter();
-  visit(expr_);
-}
+void CodegenCSINN::phase2() { visit(expr_); }
 
 void CodegenCSINN::compile(const Expr& expr) {
   expr_ = expr;
@@ -375,6 +370,8 @@ void CodegenCSINN::visit_expr(const CallNode* call) {
     OneHot(call);
   } else if (IsOp(call, "qnn.csi.where")) {
     Where(call);
+  } else if (IsOp(call, "qnn.csi.where_softmax")) {
+    WhereSoftmax(call);
   } else if (IsOp(call, "qnn.csi.data_convert")) {
     DataConvert(call);
   } else {
@@ -418,7 +415,7 @@ void CodegenCSINN::Axis0Cast(CSIConstant* data, CSIConstant* output, Qinfo* q_in
       for (int i = 0; i < inner_size; i++) {
         int index = c * inner_size + i;
         int32_t out_ = std::round(input_data[index] / q_infos[c].scale) + q_infos[c].zero_point;
-        out_ = std::max(out_, -127);
+        out_ = std::max(out_, -128);
         out_ = std::min(out_, 127);
         out[index] = out_;
       }
@@ -476,7 +473,7 @@ void CodegenCSINN::Axis3Cast(CSIConstant* data, CSIConstant* output, Qinfo* q_in
       for (int c = 0; c < q_size; c++) {
         int index = i * q_size + c;
         int32_t out_ = std::round(input_data[index] / q_infos[c].scale) + q_infos[c].zero_point;
-        out_ = std::max(out_, -127);
+        out_ = std::max(out_, -128);
         out_ = std::min(out_, 127);
         out[index] = out_;
       }
@@ -488,7 +485,7 @@ void CodegenCSINN::Axis3Cast(CSIConstant* data, CSIConstant* output, Qinfo* q_in
         int index = i * q_size + c;
         int32_t out_ = std::round(input_data[index] / q_infos[c].scale) + q_infos[c].zero_point;
         out_ = std::max(out_, -32768);
-        out_ = std::min(out_, 32768);
+        out_ = std::min(out_, 32767);
         out[index] = out_;
       }
     }
@@ -655,10 +652,28 @@ void CodegenCSINN::EmitVersion(void) {
   func_def_.NewLine();
 }
 
+void CodegenCSINN::ModelBinarySave() {
+  std::ostringstream t0;
+
+  t0 << "sess->base_quant_type = " << cfg->quantization_scheme << ";";
+  func_def_.OneLine(t0);
+
+  if (model_save == "run_only") {
+    t0 << "sess->model.save_mode = CSINN_RUN_ONLY;";
+  } else if (model_save == "save_only") {
+    t0 << "sess->model.save_mode = CSINN_SAVE_ONLY;";
+  } else if (model_save == "save_and_run") {
+    t0 << "sess->model.save_mode = CSINN_SAVE_AND_RUN;";
+  } else {
+    std::cerr << "Unsupport for model save_mode type: " << model_save << "\n";
+    exit(-1);
+  }
+  func_def_.OneLine(t0);
+}
+
 void CodegenCSINN::EmitSessionSetup(void) {
   std::ostringstream t0;
-  t0 << "void *" << ext_func_id_ << "_(";
-  t0 << "char *params_base) {";
+  t0 << "void *csinn_(char *params_base) {";
   func_def_.OneLine(t0);
   func_def_.EnterScope();
 
@@ -668,6 +683,8 @@ void CodegenCSINN::EmitSessionSetup(void) {
   t0 << "sess->base_api = " << target_name_ << ";";
   func_def_.OneLine(t0);
   t0 << "sess->base_dtype = " << base_dtype_ << ";";
+  func_def_.OneLine(t0);
+  t0 << "sess->dynamic_shape = " << (dynamic_shape_ ? "CSINN_TRUE" : "CSINN_FALSE") << ";";
   func_def_.OneLine(t0);
   if (debug_level_ == "INFO") {
     func_def_.OneLine("sess->debug_level = CSINN_DEBUG_LEVEL_INFO;");
@@ -725,24 +742,13 @@ void CodegenCSINN::EmitSessionSetup(void) {
 
 void CodegenCSINN::EmitSessionRun(void) {
   std::ostringstream t0;
-  t0 << "void csinn_run(";
-  for (uint32_t i = 0; i < ext_func_args_.size(); i++) {
-    t0 << "void* "
-       << "data" << to_string(i);
-    if (i != ext_func_args_.size() - 1) {
-      t0 << ", ";
-    }
-  }
-  t0 << ", void *sess) {";
+  t0 << "void csinn_update_input_and_run(";
+  t0 << "struct csinn_tensor **input_tensors , void *sess) {";
   func_def_.OneLine(t0);
   func_def_.EnterScope();
-
-  func_def_.OneLine("struct csinn_tensor input_tensor;");
   for (uint32_t i = 0; i < ext_func_args_.size(); i++) {
-    t0 << "input_tensor.data = data" << to_string(i) << ";";
-    func_def_.OneLine(t0);
-    t0 << "csinn_update_input(" << to_string(i) << ", "
-       << "&input_tensor, sess);";
+    t0 << "csinn_update_input(" << i << ", "
+       << "input_tensors[" << i << "], sess);";
     func_def_.OneLine(t0);
   }
   func_def_.OneLine("csinn_session_run(sess);");
@@ -776,7 +782,7 @@ void CodegenCSINN::SetConstDim(string name, std::vector<int> shape) {
   func_def_.PushDecl(t0);
 }
 
-void CodegenCSINN::SetDim(CSINNTensor* t, string name, std::vector<int> shape) {
+void CodegenCSINN::SetDim(CSINNTensor* t, string name, std::vector<int> shape, bool dynamic_shape) {
   std::ostringstream t0;
   if (shape.size() == 0) {
     t->tensor->dim_count = 1;
@@ -786,7 +792,11 @@ void CodegenCSINN::SetDim(CSINNTensor* t, string name, std::vector<int> shape) {
   for (size_t i = 0; i < shape.size(); i++) {
     t->tensor->dim[i] = shape[i];
   }
-  t->tensor->dim_count = shape.size();
+  if (dynamic_shape) {
+    t->tensor->dim_count = -1;
+  } else {
+    t->tensor->dim_count = shape.size();
+  }
 }
 
 void CodegenCSINN::CreateGraphTensor(QuantParams q_params) {
@@ -805,28 +815,7 @@ void CodegenCSINN::CreateGraphTensor(QuantParams q_params) {
   t0 << "  " << q_params.name << "->qinfo->scale = " << to_string(q_params.qinfo->scale) << ";\n";
   t0 << "  " << q_params.name << "->qinfo->min = " << to_string(q_params.qinfo->min) << ";\n";
   t0 << "  " << q_params.name << "->qinfo->max = " << to_string(q_params.qinfo->max) << ";\n";
-  std::string io_dtype;
-  if (cfg->quantization_scheme == "CSINN_QUANT_INT4_ASYM_W_SYM") {
-    io_dtype = "CSINN_DTYPE_INT4";
-  } else if (cfg->quantization_scheme == "CSINN_QUANT_UINT8_ASYM") {
-    io_dtype = "CSINN_DTYPE_UINT8";
-  } else if (cfg->quantization_scheme == "CSINN_QUANT_INT8_SYM") {
-    io_dtype = "CSINN_DTYPE_INT8";
-  } else if (cfg->quantization_scheme == "CSINN_QUANT_INT8_ASYM" ||
-             cfg->quantization_scheme == "CSINN_QUANT_INT8_ORIGINAL" ||
-             cfg->quantization_scheme == "CSINN_QUANT_INT8_ASYM_W_SYM") {
-    io_dtype = "CSINN_DTYPE_INT8";
-  } else if (cfg->quantization_scheme == "CSINN_QUANT_INT16_SYM") {
-    io_dtype = "CSINN_DTYPE_INT16";
-  } else if (cfg->quantization_scheme == "CSINN_QUANT_FLOAT16") {
-    io_dtype = "CSINN_DTYPE_FLOAT16";
-  } else if (cfg->quantization_scheme == "CSINN_QUANT_BFLOAT16") {
-    io_dtype = "CSINN_DTYPE_BFLOAT16";
-  } else if (cfg->quantization_scheme == "unset") {
-    io_dtype = GetCSINNDtype(cfg->dtype_weight);
-  } else {
-    LOG(WARNING) << "Unsupport quantization scheme " << cfg->quantization_scheme;
-  }
+  std::string io_dtype = GetCSINNDtype(q_params.dtype);
   t0 << "  " << q_params.name << "->dtype = " << io_dtype << ";\n";
   t0 << "  " << q_params.name << "->layout = " << GetCSINNActLayout(q_params.shape) << ";\n";
   func_def_.OneLine(t0);
@@ -837,7 +826,7 @@ CSINNConstantTensor* CodegenCSINN::CreateConstantTensorBase(string name, size_t 
                                                             string target_dtype, int32_t layout) {
   CSINNConstantTensor* tensor = new CSINNConstantTensor;
   tensor->name = name.c_str();
-  SetDim(tensor, name, shape);
+  SetDim(tensor, name, shape, false);
   tensor->tensor->dtype = GetCSINNTensorDtype(target_dtype);
   tensor->tensor->layout = layout;
   tensor->tensor->is_const = 1;
@@ -888,10 +877,59 @@ void CodegenCSINN::CreateConstantTensor(CSINNOP* op, CSIConstant* data, string n
     ret->tensor->quant_channel = quant_params->q_size;
     ret->set_const(data_cast);
     ret->set_quant(*quant_params);
-    /* for light_new */
+
     qinfo_list_.push_back(*quant_params);
     op->push_constant(ret);
   }
+}
+
+void CodegenCSINN::CreateWeightTensor(CSINNOP* op, CSIConstant* data, string name,
+                                      std::vector<int> shape, QuantParams* quant_params) {
+  int32_t constant_layout;
+  /* shape has at least 1 dim */
+  if (shape.size() == 0) {
+    shape.push_back(1);
+  }
+  constant_layout = GetCSINNTensorWeightLayout(shape);
+  quant_params->shape = shape;
+  data->layout = constant_layout;
+
+  string target_dtype = quant_params->dtype;
+  Qinfo* q_infos = quant_params->qinfo;
+  int q_size = quant_params->q_size;
+  CHECK(q_size == 1) << "expects 1 q_size";
+
+  CSIConstant* data_cast = new CSIConstant(target_dtype, data->get_shape());
+  float* input_data = GetFloatData(data);
+  data_cast->set_name(data->get_name());
+
+  int size = data->element_number();
+
+  if (target_dtype == "int8_t") {
+    int8_t* out = reinterpret_cast<int8_t*>(data_cast->get_data_buf());
+    for (int i = 0; i < size; i++) {
+      int valid_range = std::pow(2, 7) - 1;
+      float abs_max = std::max(std::abs(q_infos->max), std::abs(q_infos->min));
+      q_infos->scale = abs_max / valid_range;
+      q_infos->zero_point = 0;
+      int32_t out_ = std::round(input_data[i] / q_infos->scale) + q_infos->zero_point;
+      out_ = std::max(out_, -127);
+      out_ = std::min(out_, 127);
+      out[i] = out_;
+    }
+  } else {
+    LOG(ERROR) << "CreateWeightTensor unsupport dtype:" << target_dtype;
+  }
+  free(input_data);
+
+  CSINNConstantTensor* ret = CreateConstantTensorBase(
+      name, data_cast->byte_size(), quant_params->shape, target_dtype, constant_layout);
+  ret->tensor->quant_channel = quant_params->q_size;
+  ret->set_const(data_cast);
+  ret->set_quant(*quant_params);
+
+  qinfo_list_.push_back(*quant_params);
+  op->push_constant(ret);
 }
 
 void CodegenCSINN::CreateConstantTensor(CSINNOP* op, CSIConstant* data, string name,
@@ -933,7 +971,7 @@ void CodegenCSINN::CreateConstantTensor(CSINNOP* op, CSIConstant* data, string n
     ret->set_quant(*bias_quant_params);
     op->push_constant(ret);
     bias_quant_params->name = name;
-    /* for light_new */
+
     qinfo_list_.push_back(*bias_quant_params);
   }
 }
@@ -942,14 +980,13 @@ CSINNVarTensor* CodegenCSINN::CreateTensor(string name, string data, std::vector
                                            QuantParams quant_params, string dtype) {
   CSINNVarTensor* tensor = new CSINNVarTensor;
   tensor->name = name.c_str();
-  SetDim(tensor, name, shape);
+  SetDim(tensor, name, shape, dynamic_shape_);
   tensor->tensor->quant_channel = quant_params.q_size;
   tensor->tensor->dtype = GetCSINNTensorDtype(dtype);
   tensor->tensor->layout = GetCSINNTensorActLayout(shape);
 
-  tensor_data[name] = data;
   tensor->set_quant(quant_params);
-  /* for light_new */
+
   qinfo_list_.push_back(quant_params);
   return tensor;
 }
@@ -1090,15 +1127,15 @@ void CodegenCSINN::params_common_setup(std::ostringstream& decl, const CallNode*
   params_idx_++;
   func_def_.PushDecl(t0);
 
-  if (cfg->quantization_scheme != "unset" &&
-      cfg->quantization_scheme != "CSINN_QUANT_INT4_ASYM_W_SYM" &&
-      cfg->quantization_scheme != "CSINN_QUANT_INT8_ASYM_W_SYM" && !hybrid_layer_name.empty()) {
-    t0 << params_name << "->base.quant_type = " << cfg->quantization_scheme;
+  auto curr_cfg = call->get_quant_config();
+  if (curr_cfg->quantization_scheme != "unset" &&
+      curr_cfg->quantization_scheme != "CSINN_QUANT_INT4_ASYM_W_SYM" &&
+      curr_cfg->quantization_scheme != "CSINN_QUANT_INT8_ASYM_W_SYM") {
+    t0 << params_name << "->base.quant_type = " << curr_cfg->quantization_scheme;
     func_def_.PushDecl(t0);
   }
 
   setup_callback(decl, op_name, params_name);
-  CreateTensorSessData();
 }
 
 string CodegenCSINN::CreateOutputTensor(CSINNOP* op, std::ostringstream& decl, const CallNode* call,
@@ -1135,18 +1172,6 @@ int CodegenCSINN::CheckOutput(const CallNode* call) {
     }
   }
   return -1;
-}
-
-output_element* CodegenCSINN::GetOutput(string name) {
-  if (out_[0].name == name) {
-    return &(out_[0]);
-  }
-  for (uint i = 0; i < out_list_.size(); i++) {
-    if (out_list_[i].name == name) {
-      return &(out_list_[i]);
-    }
-  }
-  return NULL;
 }
 
 void CodegenCSINN::PushOutput(string name, const CallNode* call, string dtype) {
@@ -1211,7 +1236,7 @@ void CodegenCSINN::SisoOp(CSINNOP* op, std::ostringstream& decl, const CallNode*
   op->set_name(complete_name);
 
   auto input_qinfo = GetCallOPQuant(call, 0);
-  siso_input_name = CreateInputTensor(op, decl, call, 0, input_qinfo);
+  CreateInputTensor(op, decl, call, 0, input_qinfo);
   /* Emit output tensor */
   auto output_qinfo = GetCallOPQuant(call, 1);
   string output_name = CreateOutputTensor(op, decl, call, output_qinfo);
@@ -1258,7 +1283,6 @@ void CodegenCSINN::DisoOp(const CallNode* call, string op_name, string out_dtype
   decl << "(";
 
   string lhs_name, rhs_name;
-  std::map<int, string> free_tensor;
 
   string complete_name = get_complete_layer_name(op_name, attr->layer_name.c_str());
   op->set_name(complete_name);
@@ -1267,12 +1291,16 @@ void CodegenCSINN::DisoOp(const CallNode* call, string op_name, string out_dtype
   visit(call->args[0]);
 
   auto lhs_qinfo = GetCallOPQuant(call, 0);
-  if (call->args[0].as<CallNode>() || call->args[0].as<VarNode>() ||
-      call->args[0].as<TupleGetItemNode>()) {
-    lhs_name = CreateInputTensor(op, decl, call, 0, lhs_qinfo);
-    free_tensor[0] = lhs_name;
-    buf_idx_++;
-  } else {
+  auto str_lhs_dtype = GetDtypeString(call->args[0]->hhb_expr_extend_->dtype);
+
+  if (str_lhs_dtype == "int64") {
+    lhs_qinfo->dtype = "int64_t";
+    lhs_qinfo->qinfo->scale = 1;
+    lhs_qinfo->qinfo->zero_point = 0;
+    lhs_qinfo->q_size = 1;
+  }
+
+  if (call->args[0].as<ConstantNode>()) {
     CHECK(constant_.size() == 1) << "Every args expects a single constant_";
     auto lhs = constant_[0];
     auto lhs_shape = call->args[0]->get_shape();
@@ -1280,19 +1308,25 @@ void CodegenCSINN::DisoOp(const CallNode* call, string op_name, string out_dtype
     buf_idx_++;
     CreateConstantTensor(op, lhs, lhs_name, lhs_shape, lhs_qinfo);
     decl << lhs_name;
+  } else {
+    lhs_name = CreateInputTensor(op, decl, call, 0, lhs_qinfo);
+    buf_idx_++;
   }
 
   decl << ", ";
 
   /* Emit input1 tensor */
   auto rhs_qinfo = GetCallOPQuant(call, 1);
-  if (call->args[1].as<CallNode>() || call->args[1].as<VarNode>() ||
-      call->args[1].as<TupleGetItemNode>()) {
-    visit(call->args[1]);
-    CHECK(out_.size() == 1) << "Every args expects a single out_";
-    rhs_name = CreateInputTensor(op, decl, call, 1, rhs_qinfo);
-    free_tensor[1] = rhs_name;
-  } else {
+
+  auto str_rhs_dtype = GetDtypeString(call->args[1]->hhb_expr_extend_->dtype);
+  if (str_rhs_dtype == "int64") {
+    rhs_qinfo->dtype = "int64_t";
+    rhs_qinfo->qinfo->scale = 1;
+    rhs_qinfo->qinfo->zero_point = 0;
+    rhs_qinfo->q_size = 1;
+  }
+
+  if (call->args[1].as<ConstantNode>()) {
     // add constant arg
     visit(call->args[1]);
     CHECK(constant_.size() == 1) << "Every args expects a single constant_";
@@ -1301,10 +1335,28 @@ void CodegenCSINN::DisoOp(const CallNode* call, string op_name, string out_dtype
     rhs_name = "rhs_" + to_string(buf_idx_);
     CreateConstantTensor(op, rhs, rhs_name, rhs_shape, rhs_qinfo);
     decl << rhs_name;
+  } else {
+    visit(call->args[1]);
+    CHECK(out_.size() == 1) << "Every args expects a single out_";
+    rhs_name = CreateInputTensor(op, decl, call, 1, rhs_qinfo);
+  }
+
+  auto output_qinfo = GetCallOPQuant(call, 2);
+  if (str_lhs_dtype == "int64_t" || str_rhs_dtype == "int64_t") {
+    output_qinfo->dtype = "int64_t";
+    output_qinfo->qinfo->scale = 1;
+    output_qinfo->qinfo->zero_point = 0;
+    output_qinfo->q_size = 1;
+  }
+
+  if (out_dtype == "bool") {
+    output_qinfo->dtype = out_dtype;
+    output_qinfo->qinfo->scale = 1;
+    output_qinfo->qinfo->zero_point = 0;
+    output_qinfo->q_size = 1;
   }
 
   /* Emit output tensor */
-  auto output_qinfo = GetCallOPQuant(call, 2);
   string output_name = CreateOutputTensor(op, decl, call, output_qinfo);
 
   collect_quant_info(complete_name, attr->q_params, 2);
@@ -1321,9 +1373,6 @@ void CodegenCSINN::DisoOp(const CallNode* call, string op_name, string out_dtype
   buf_idx_++;
   params_common_setup(decl, call, op_name, params_name, attr->layer_name.c_str());
   end_stream(decl, op_name);
-  for (auto iter = free_tensor.begin(); iter != free_tensor.end(); iter++) {
-    FreeTensor(call->args[iter->first], iter->second);
-  }
 }
 
 template <typename T>
@@ -1501,29 +1550,6 @@ void CodegenCSINN::SetupPool3DParams(string name, const T* attr) {
   SetupPadding(name, attr);
 }
 
-void CodegenCSINN::FreeTensor(const Expr& expr, string name) {
-  auto iter = layer_count.find(expr.get());
-  if (iter == layer_count.end()) {
-    CHECK(0);
-  }
-  auto& count = iter->second;
-  if (count > 1) {
-    count--;
-  } else {
-    if (const VarNode* var = expr.as<VarNode>()) {
-      name = replace(var->name_hint());
-    }
-    // Exclude input/output nodes
-    if (io_nodes.find(name) == io_nodes.end()) {
-      std::ostringstream t0;
-      t0 << "shl_mem_free(" + name + "->data)";
-      func_def_.PushCall(t0);
-      t0 << "shl_mem_free(" + name + ")";
-      func_def_.PushCall(t0);
-    }
-  }
-}
-
 std::shared_ptr<std::vector<int32_t>> CodegenCSINN::FuseZpToBias(CSIConstant* data, CSINNOP* op,
                                                                  const CallNode* call,
                                                                  QuantParams* q_params,
@@ -1609,7 +1635,12 @@ void CodegenCSINN::Conv1d(const CallNode* call) {
   auto wshape = call->args[1]->get_shape();
   string kernel_name = "kernel_" + to_string(buf_idx_);
   auto kernel_qinfo = GetCallOPQuant(call, 1);
-  CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  if (cfg->quantization_scheme == "CSINN_QUANT_FLOAT16_W_INT8") {
+    kernel_qinfo->dtype = "int8_t";
+    CreateWeightTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  } else {
+    CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  }
   decl << ", " << kernel_name;
 
   /* Emit bias tensor */
@@ -1618,10 +1649,8 @@ void CodegenCSINN::Conv1d(const CallNode* call) {
   auto bias = constant_[0];
   auto bshape = call->args[2]->get_shape();
   string bias_name = "bias_" + to_string(buf_idx_);
-  auto bias_qinfo = GetCallOPQuant(call, 2);
-  CreateConstantTensor(op, bias, bias_name, bshape, bias_qinfo->dtype, input_qinfo, kernel_qinfo,
-                       bias_qinfo);
-
+  bool fuse_zp = false;
+  CreateBiasTensor(op, call, bias, bias_name, attr->q_params, &fuse_zp, "conv_bias");
   decl << ", " << bias_name;
 
   string params_name = "params_" + to_string(buf_idx_);
@@ -1633,7 +1662,6 @@ void CodegenCSINN::Conv1d(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "conv1d", params_name, attr->layer_name.c_str());
   end_stream(decl, "conv1d");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::CreateBiasTensor(CSINNOP* op, const CallNode* call, CSIConstant* data,
@@ -1758,7 +1786,6 @@ void CodegenCSINN::Conv2d(const CallNode* call, string op_name) {
 
   params_common_setup(decl, call, op_name, params_name, attr->layer_name.c_str());
   end_stream(decl, op_name);
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Conv3d(const CallNode* call) {
@@ -1818,7 +1845,6 @@ void CodegenCSINN::Conv3d(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "conv3d", params_name, attr->layer_name.c_str());
   end_stream(decl, "conv3d");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Dilation2d(const CallNode* call) {
@@ -1867,7 +1893,6 @@ void CodegenCSINN::Dilation2d(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "dilation2d", params_name, attr->layer_name.c_str());
   end_stream(decl, "dilation2d");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::DeConv2d(const CallNode* call) {
@@ -1937,7 +1962,6 @@ void CodegenCSINN::DeConv2d(const CallNode* call) {
 
   params_common_setup(decl, call, "deconv2d", params_name, attr->layer_name.c_str());
   end_stream(decl, "deconv2d");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::DeConv3d(const CallNode* call) {
@@ -1998,7 +2022,6 @@ void CodegenCSINN::DeConv3d(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "deconv3d", params_name, attr->layer_name.c_str());
   end_stream(decl, "deconv3d");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Dense(const CallNode* call) {
@@ -2038,7 +2061,13 @@ void CodegenCSINN::Dense(const CallNode* call) {
 
   string kernel_name = "kernel_" + to_string(buf_idx_);
   auto kernel_qinfo = GetCallOPQuant(call, 1);
-  CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+
+  if (cfg->quantization_scheme == "CSINN_QUANT_FLOAT16_W_INT8") {
+    kernel_qinfo->dtype = "int8_t";
+    CreateWeightTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  } else {
+    CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  }
 
   decl << ", " << kernel_name;
 
@@ -2076,7 +2105,6 @@ void CodegenCSINN::Dense(const CallNode* call) {
 
   params_common_setup(decl, call, "fullyconnected", params_name, dense_attr->layer_name.c_str());
   end_stream(decl, "fullyconnected");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Softmax(const CallNode* call) {
@@ -2100,7 +2128,6 @@ void CodegenCSINN::Softmax(const CallNode* call) {
 
   params_common_setup(decl, call, "softmax", params_name, attr->layer_name.c_str());
   end_stream(decl, "softmax");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Reverse(const CallNode* call) {
@@ -2120,7 +2147,6 @@ void CodegenCSINN::Reverse(const CallNode* call) {
 
   params_common_setup(decl, call, "reverse", params_name, attr->layer_name.c_str());
   end_stream(decl, "reverse");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::LogSoftmax(const CallNode* call) {
@@ -2140,7 +2166,6 @@ void CodegenCSINN::LogSoftmax(const CallNode* call) {
 
   params_common_setup(decl, call, "log_softmax", params_name, attr->layer_name.c_str());
   end_stream(decl, "log_softmax");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::ExpandDims(const CallNode* call) {
@@ -2159,7 +2184,6 @@ void CodegenCSINN::ExpandDims(const CallNode* call) {
 
   params_common_setup(decl, call, "expand_dims", params_name, attr->layer_name.c_str());
   end_stream(decl, "expand_dims");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::MaxPool2d(const CallNode* call) {
@@ -2175,7 +2199,6 @@ void CodegenCSINN::MaxPool2d(const CallNode* call) {
 
   params_common_setup(decl, call, "maxpool2d", params_name, attr->layer_name.c_str());
   end_stream(decl, "maxpool2d");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::AvgPool2d(const CallNode* call) {
@@ -2195,7 +2218,6 @@ void CodegenCSINN::AvgPool2d(const CallNode* call) {
 
   params_common_setup(decl, call, "avgpool2d", params_name, attr->layer_name.c_str());
   end_stream(decl, "avgpool2d");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::AvgPool3d(const CallNode* call) {
@@ -2212,7 +2234,6 @@ void CodegenCSINN::AvgPool3d(const CallNode* call) {
   params_common_setup(decl, call, "avgpool3d", params_name, attr->layer_name.c_str(),
                       "CSINN_NCDHW");
   end_stream(decl, "avgpool3d");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::MaxPool3d(const CallNode* call) {
@@ -2229,7 +2250,6 @@ void CodegenCSINN::MaxPool3d(const CallNode* call) {
   params_common_setup(decl, call, "maxpool3d", params_name, attr->layer_name.c_str(),
                       "CSINN_NCDHW");
   end_stream(decl, "maxpool3d");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::GlobalAvgPool2d(const CallNode* call) {
@@ -2246,7 +2266,6 @@ void CodegenCSINN::GlobalAvgPool2d(const CallNode* call) {
 
   params_common_setup(decl, call, "global_avgpool2d", params_name, attr->layer_name.c_str());
   end_stream(decl, "global_avgpool2d");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::GlobalMaxPool2d(const CallNode* call) {
@@ -2263,7 +2282,6 @@ void CodegenCSINN::GlobalMaxPool2d(const CallNode* call) {
 
   params_common_setup(decl, call, "global_maxpool2d", params_name, attr->layer_name.c_str());
   end_stream(decl, "global_maxpool2d");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Maxpool2dWithArgmax(const CallNode* call) {
@@ -2279,7 +2297,6 @@ void CodegenCSINN::Maxpool2dWithArgmax(const CallNode* call) {
 
   params_common_setup(decl, call, "maxpool2d", params_name, attr->layer_name.c_str());
   end_stream(decl, "maxpool2d");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::MaxPool2dLocat(const CallNode* call) {
@@ -2314,7 +2331,6 @@ void CodegenCSINN::MaxPool2dLocat(const CallNode* call) {
   PushOutput(output_name, call, "int32_t");
   params_common_setup(decl, call, "maxpool2d_locat", params_name, attr->layer_name.c_str());
   end_stream(decl, "maxpool2d_locat");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::UnPool2d(const CallNode* call) {
@@ -2365,8 +2381,6 @@ void CodegenCSINN::UnPool2d(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "unpooling", params_name, attr->layer_name.c_str());
   end_stream(decl, "unpooling");
-  FreeTensor(call->args[0], input_name);
-  FreeTensor(call->args[1], mask_name);
 }
 
 void CodegenCSINN::PSROIPool(const CallNode* call) {
@@ -2422,8 +2436,6 @@ void CodegenCSINN::PSROIPool(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "psroipooling", params_name, attr->layer_name.c_str());
   end_stream(decl, "psroipooling");
-  FreeTensor(call->args[0], input_name);
-  FreeTensor(call->args[1], roi_name);
 }
 
 void CodegenCSINN::ROIPool(const CallNode* call) {
@@ -2481,8 +2493,6 @@ void CodegenCSINN::ROIPool(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "roipool", params_name, attr->layer_name.c_str());
   end_stream(decl, "roipool");
-  FreeTensor(call->args[0], input_name);
-  FreeTensor(call->args[1], roi_name);
 }
 
 void CodegenCSINN::Proposal(const CallNode* call) {
@@ -2612,8 +2622,6 @@ void CodegenCSINN::Proposal(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "proposal", params_name, attr->layer_name.c_str());
   end_stream(decl, "proposal");
-  FreeTensor(call->args[0], cls_name);
-  FreeTensor(call->args[1], bbox_name);
 }
 
 void CodegenCSINN::UpSampling(const CallNode* call) {
@@ -2665,7 +2673,6 @@ void CodegenCSINN::UpSampling(const CallNode* call) {
 
   params_common_setup(decl, call, "resize", params_name, attr->layer_name.c_str());
   end_stream(decl, "resize");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Relu(const CallNode* call) {
@@ -2682,7 +2689,6 @@ void CodegenCSINN::Relu(const CallNode* call) {
   malloc_params("csinn_relu_params", params_name);
   params_common_setup(decl, call, "relu", params_name, attr->layer_name.c_str());
   end_stream(decl, "relu");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Fsmn(const CallNode* call) {
@@ -2763,7 +2769,6 @@ void CodegenCSINN::Fsmn(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "fsmn", params_name, attr->layer_name.c_str());
   end_stream(decl, "fsmn");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Full(const CallNode* call) {
@@ -2790,7 +2795,6 @@ void CodegenCSINN::Full(const CallNode* call) {
 
   params_common_setup(decl, call, "full", params_name, attr->layer_name.c_str());
   end_stream(decl, "full");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Take(const CallNode* call) {
@@ -2819,15 +2823,21 @@ void CodegenCSINN::Take(const CallNode* call) {
     axis[0] = static_cast<int>(attr->axis->value);
     axis[0] = axis[0] < 0 ? axis[0] + in_shape.size() : axis[0];
   }
-  if (call->args[0].as<CallNode>()) {
-    CHECK(out_.size() == 1) << "Every args expects a single out_";
-    input_name = CreateInputTensor(op, decl, call, 0, GetCallOPQuant(call, 0));
-  } else {
+  if (call->args[0].as<ConstantNode>()) {
     CHECK(constant_.size() == 1) << "Every args expects a single constant_";
     auto constant_input = constant_[0];
     input_name = "gather_input_" + to_string(buf_idx_);
-    CreateConstantTensor(op, constant_input, input_name, in_shape, GetCallOPQuant(call, 0));
+    auto input_qinfo = GetCallOPQuant(call, 0);
+    if (cfg->quantization_scheme == "CSINN_QUANT_FLOAT16_W_INT8") {
+      input_qinfo->dtype = "int8_t";
+      CreateWeightTensor(op, constant_input, input_name, in_shape, input_qinfo);
+    } else {
+      CreateConstantTensor(op, constant_input, input_name, in_shape, input_qinfo);
+    }
     decl << input_name;
+  } else {
+    CHECK(out_.size() == 1) << "Every args expects a single out_";
+    input_name = CreateInputTensor(op, decl, call, 0, GetCallOPQuant(call, 0));
   }
 
   decl << ", ";
@@ -2835,22 +2845,23 @@ void CodegenCSINN::Take(const CallNode* call) {
   /* Emit indices tensor */
   visit(call->args[1]);
   string indices_name;
-  if (call->args[1].as<CallNode>()) {
-    CHECK(out_.size() == 1) << "Every args expects a single out_";
-    indices_name = CreateInputTensor(op, decl, call, 1, GetCallOPQuant(call, 1));
-  } else {
+  if (call->args[1].as<ConstantNode>()) {
     CHECK(constant_.size() == 1) << "Every args expects a single constant_";
     auto indices = constant_[0];
     auto indices_shape = call->args[1]->get_shape();
     string indices_name = "indices_" + to_string(buf_idx_);
     CreateConstantTensor(op, indices, indices_name, indices_shape, GetCallOPQuant(call, 1));
     decl << indices_name;
+  } else {
+    CHECK(out_.size() == 1) << "Every args expects a single out_";
+    indices_name = CreateInputTensor(op, decl, call, 1, GetCallOPQuant(call, 1));
   }
 
   string params_name = "params_" + to_string(buf_idx_);
 
   /* Emit output tensor */
-  string output_name = CreateOutputTensor(op, decl, call, GetCallOPQuant(call, 2));
+  auto output_qinfo = GetCallOPQuant(call, 2);
+  string output_name = CreateOutputTensor(op, decl, call, output_qinfo);
 
   collect_quant_info(complete_name, attr->q_params, 2);
 
@@ -2865,15 +2876,9 @@ void CodegenCSINN::Take(const CallNode* call) {
   }
   func_def_.PushDecl(t0);
 
-  PushOutput(output_name, call);
+  PushOutput(output_name, call, output_qinfo->dtype);
   params_common_setup(decl, call, "gather", params_name, attr->layer_name.c_str());
   end_stream(decl, "gather");
-  if (call->args[0].as<CallNode>()) {
-    FreeTensor(call->args[0], input_name);
-  }
-  if (call->args[1].as<CallNode>()) {
-    FreeTensor(call->args[1], indices_name);
-  }
 }
 
 void CodegenCSINN::Clip(const CallNode* call) {
@@ -2897,7 +2902,6 @@ void CodegenCSINN::Clip(const CallNode* call) {
 
   params_common_setup(decl, call, "clip", params_name, attr->layer_name.c_str());
   end_stream(decl, "clip");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Pad(const CallNode* call) {
@@ -2916,7 +2920,7 @@ void CodegenCSINN::Pad(const CallNode* call) {
   CHECK(out_.size() == 1) << "Every args expects a single out_";
   string complete_name = get_complete_layer_name("pad", attr->layer_name.c_str());
   op->set_name(complete_name);
-  siso_input_name = CreateInputTensor(op, decl, call, 0, GetCallOPQuant(call, 0));
+  CreateInputTensor(op, decl, call, 0, GetCallOPQuant(call, 0));
 
   /* Emit output tensor */
   string output_name = CreateOutputTensor(op, decl, call, GetCallOPQuant(call, 2));
@@ -2967,7 +2971,6 @@ void CodegenCSINN::Pad(const CallNode* call) {
 
   params_common_setup(decl, call, "pad", params_name, attr->layer_name.c_str());
   end_stream(decl, "pad");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Tile(const CallNode* call) {
@@ -2994,7 +2997,6 @@ void CodegenCSINN::Tile(const CallNode* call) {
 
   params_common_setup(decl, call, "tile", params_name + ".tile", attr->layer_name.c_str());
   end_stream(decl, "tile");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::DepthToSpace(const CallNode* call) {
@@ -3021,7 +3023,6 @@ void CodegenCSINN::DepthToSpace(const CallNode* call) {
 
   params_common_setup(decl, call, "depth_to_space", params_name, attr->layer_name.c_str());
   end_stream(decl, "depth_to_space");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::SpaceToDepth(const CallNode* call) {
@@ -3041,7 +3042,6 @@ void CodegenCSINN::SpaceToDepth(const CallNode* call) {
 
   params_common_setup(decl, call, "space_to_depth", params_name, attr->layer_name.c_str());
   end_stream(decl, "space_to_depth");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Relu6(const CallNode* call) {
@@ -3060,7 +3060,6 @@ void CodegenCSINN::Relu6(const CallNode* call) {
 
   params_common_setup(decl, call, "relu6", params_name, attr->layer_name.c_str());
   end_stream(decl, "relu6");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::PRelu(const CallNode* call) {
@@ -3111,7 +3110,6 @@ void CodegenCSINN::PRelu(const CallNode* call) {
 
   params_common_setup(decl, call, "prelu", params_name, attr->layer_name.c_str());
   end_stream(decl, "prelu");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::LeakyRelu(const CallNode* call) {
@@ -3163,7 +3161,6 @@ void CodegenCSINN::LeakyRelu(const CallNode* call) {
 
   params_common_setup(decl, call, "leaky_relu", params_name, attr->layer_name.c_str());
   end_stream(decl, "leaky_relu");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Concat(const CallNode* call) {
@@ -3184,7 +3181,6 @@ void CodegenCSINN::Concat(const CallNode* call) {
   string input_name = "input_" + to_string(buf_idx_);
   t0 << "struct csinn_tensor *" << input_name << "[" << input_num << "]";
   func_def_.PushDecl(t0);
-  std::map<int, string> free_tensor;
   string complete_name = get_complete_layer_name("concat", attr->layer_name.c_str());
   op->set_name(complete_name);
 
@@ -3194,7 +3190,6 @@ void CodegenCSINN::Concat(const CallNode* call) {
       auto sub_input = GetRealInput(sub_input_node);
       CHECK(sub_input.need_copy == true);
       mem_stream << input_name << "[" << i << "] = " << sub_input.name;
-      free_tensor[i] = sub_input.name;
     } else if (auto sub_input_var_node = tuple->fields[i].as<VarNode>()) {
       string var_name =
           InputTensorVar(op, sub_input_var_node, i, *GetCallOPQuant(call, i), cfg->dtype_weight);
@@ -3203,7 +3198,6 @@ void CodegenCSINN::Concat(const CallNode* call) {
       string item_name =
           InputTensorTupleItem(sub_input_item_node, *GetCallOPQuant(call, i), cfg->dtype_weight);
       mem_stream << input_name << "[" << i << "] = " << item_name;
-      free_tensor[i] = item_name;
     } else {
       auto sub_input_const_node = tuple->fields[i].as<ConstantNode>();
       CHECK(sub_input_const_node);
@@ -3221,8 +3215,8 @@ void CodegenCSINN::Concat(const CallNode* call) {
   decl << input_name;
 
   /* Emit output tensor */
-  string output_name =
-      CreateOutputTensor(op, decl, call, GetCallOPQuant(call, attr->q_params.size() - 1));
+  auto output_qinfo = GetCallOPQuant(call, attr->q_params.size() - 1);
+  string output_name = CreateOutputTensor(op, decl, call, output_qinfo);
 
   collect_quant_info(complete_name, attr->q_params, attr->q_params.size() - 1);
 
@@ -3235,13 +3229,10 @@ void CodegenCSINN::Concat(const CallNode* call) {
   func_def_.PushDecl(t0);
   t0 << params_name << "->axis = " << to_string(attr->axis);
   func_def_.PushDecl(t0);
-  PushOutput(output_name, call);
+  PushOutput(output_name, call, output_qinfo->dtype);
 
   params_common_setup(decl, call, "concat", params_name, attr->layer_name.c_str());
   end_stream(decl, "concat");
-  for (auto iter = free_tensor.begin(); iter != free_tensor.end(); iter++) {
-    FreeTensor(tuple->fields[iter->first], iter->second);
-  }
 }
 
 void CodegenCSINN::LRN(const CallNode* call) {
@@ -3291,7 +3282,6 @@ void CodegenCSINN::LRN(const CallNode* call) {
 
   params_common_setup(decl, call, "lrn", params_name, attr->layer_name.c_str());
   end_stream(decl, "lrn");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Flatten(const CallNode* call) {
@@ -3309,7 +3299,6 @@ void CodegenCSINN::Flatten(const CallNode* call) {
 
   params_common_setup(decl, call, "flatten", params_name, attr->layer_name.c_str());
   end_stream(decl, "flatten");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Sigmoid(const CallNode* call) {
@@ -3327,7 +3316,6 @@ void CodegenCSINN::Sigmoid(const CallNode* call) {
 
   params_common_setup(decl, call, "sigmoid", params_name, attr->layer_name.c_str());
   end_stream(decl, "sigmoid");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Transpose(const CallNode* call) {
@@ -3359,7 +3347,8 @@ void CodegenCSINN::Transpose(const CallNode* call) {
     func_def_.PushDecl(t0);
   }
 
-  string output_name = CreateOutputTensor(op, decl, call, GetCallOPQuant(call, 1));
+  auto output_qinfo = GetCallOPQuant(call, 1);
+  string output_name = CreateOutputTensor(op, decl, call, output_qinfo);
 
   collect_quant_info(complete_name, attrs->q_params, 1);
 
@@ -3372,10 +3361,9 @@ void CodegenCSINN::Transpose(const CallNode* call) {
   t0 << params_name << "->permute_num = " << to_string(perm_size);
   func_def_.PushDecl(t0);
 
-  PushOutput(output_name, call);
+  PushOutput(output_name, call, output_qinfo->dtype);
   params_common_setup(decl, call, "transpose", params_name, attrs->layer_name.c_str());
   end_stream(decl, "transpose");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Reshape(const CallNode* call) {
@@ -3385,7 +3373,7 @@ void CodegenCSINN::Reshape(const CallNode* call) {
   const auto* attr = call->attrs.as<QnnCSIReshapeAttrs>();
   SisoOp<QnnCSIReshapeAttrs>(op, decl, call, attr, "reshape");
 
-  auto out_shape = call->get_shape();
+  auto out_shape = attr->newshape;
   string new_shape_name = "shape_" + to_string(buf_idx_);
   int32_t new_shape_dim_num = out_shape.size();
   t0 << "int32_t *" << new_shape_name << " = malloc(" << new_shape_dim_num << " * 4)";
@@ -3407,7 +3395,6 @@ void CodegenCSINN::Reshape(const CallNode* call) {
   params_common_setup(decl, call, "reshape", params_name, attr->layer_name.c_str());
 
   end_stream(decl, "reshape");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::BroadCastTo(const CallNode* call) {
@@ -3433,7 +3420,6 @@ void CodegenCSINN::BroadCastTo(const CallNode* call) {
 
   params_common_setup(decl, call, "broadcast_to", params_name, attr->layer_name.c_str());
   end_stream(decl, "broadcast_to");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Squeeze(const CallNode* call) {
@@ -3462,7 +3448,6 @@ void CodegenCSINN::Squeeze(const CallNode* call) {
   func_def_.PushDecl(t0);
   params_common_setup(decl, call, "squeeze", params_name, attr->layer_name.c_str());
   end_stream(decl, "squeeze");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Segment(const CallNode* call, string name) {
@@ -3512,7 +3497,6 @@ void CodegenCSINN::Segment(const CallNode* call, string name) {
 
   params_common_setup(decl, call, "segment_" + name, params_name, attr->layer_name.c_str());
   end_stream(decl, "segment_" + name);
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::ScatterND(const CallNode* call) {
@@ -3562,7 +3546,6 @@ void CodegenCSINN::ScatterND(const CallNode* call) {
 
   params_common_setup(decl, call, "scatter_nd", params_name, attr->layer_name.c_str());
   end_stream(decl, "scatter_nd");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Reduce(const CallNode* call, string name, string out_dtype) {
@@ -3689,7 +3672,6 @@ void CodegenCSINN::Reduce(const CallNode* call, string name, string out_dtype) {
 
   params_common_setup(decl, call, name, params_name, attr->layer_name.c_str());
   end_stream(decl, name);
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::CropResize(const CallNode* call) {
@@ -3758,7 +3740,6 @@ void CodegenCSINN::CropResize(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "crop_resize", params_name, attr->layer_name.c_str());
   end_stream(decl, "crop_resize");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::StridedSlice(const CallNode* call) {
@@ -3835,7 +3816,6 @@ void CodegenCSINN::StridedSlice(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "strided_slice", params_name, attr->layer_name.c_str());
   end_stream(decl, "strided_slice");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::Split(const CallNode* call) {
@@ -3887,7 +3867,6 @@ void CodegenCSINN::Split(const CallNode* call) {
     } else if (cfg->dtype_weight == "float" || cfg->dtype_weight == "float32") {
       out_size *= 4;
     }
-    malloc_buf(out, out_size);
     alloc_idx_++;
     string output_name = "output_" + to_string(buf_idx_) + "_" + to_string(i);
     CSINNVarTensor* ret =
@@ -3944,7 +3923,6 @@ void CodegenCSINN::Split(const CallNode* call) {
   PushOutput(out_names, call);
   params_common_setup(decl, call, "split", params_name, attr->layer_name.c_str());
   end_stream(decl, "split");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::BatchToSpaceND(const CallNode* call) {
@@ -4011,7 +3989,6 @@ void CodegenCSINN::BatchToSpaceND(const CallNode* call) {
 
   params_common_setup(decl, call, "batch_to_space_nd", params_name, attrs->layer_name.c_str());
   end_stream(decl, "batch_to_space_nd");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::SpaceToBatchND(const CallNode* call) {
@@ -4073,7 +4050,6 @@ void CodegenCSINN::SpaceToBatchND(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "space_to_batch_nd", params_name, attrs->layer_name.c_str());
   end_stream(decl, "space_to_batch_nd");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::MatMul(const CallNode* call) {
@@ -4082,7 +4058,6 @@ void CodegenCSINN::MatMul(const CallNode* call) {
   CSINNOP* op = new CSINNOP;
   const auto* attrs = call->attrs.as<QnnCSIMatMulAttrs>();
   CHECK(attrs);
-  std::map<int, string> free_tensor;
 
   CHECK(call->args.size() == 3) << "Dense expects 2 args";
 
@@ -4097,7 +4072,6 @@ void CodegenCSINN::MatMul(const CallNode* call) {
 
   auto input_qinfo = GetCallOPQuant(call, 0);
   string input1_name = CreateInputTensor(op, decl, call, 0, input_qinfo);
-  free_tensor[0] = input1_name;
   buf_idx_++;
   decl << ", ";
   string input2_name;
@@ -4109,7 +4083,6 @@ void CodegenCSINN::MatMul(const CallNode* call) {
       call->args[0].as<TupleGetItemNode>()) {
     CHECK(out_.size() == 1) << "Every args expects a single out_";
     input2_name = CreateInputTensor(op, decl, call, 1, input2_qinfo);
-    free_tensor[1] = input2_name;
   } else {
     // add constant arg
     CHECK(constant_.size() == 1) << "Every args expects a single constant_";
@@ -4117,12 +4090,17 @@ void CodegenCSINN::MatMul(const CallNode* call) {
     auto b_shape = call->args[1]->get_shape();
     input2_name = "data_b_" + to_string(buf_idx_);
     auto input2_qinfo = GetCallOPQuant(call, 1);
-    CreateConstantTensor(op, data_b, input2_name, b_shape, input2_qinfo);
+    if (cfg->quantization_scheme == "CSINN_QUANT_FLOAT16_W_INT8") {
+      input2_qinfo->dtype = "int8_t";
+      CreateWeightTensor(op, data_b, input2_name, b_shape, input2_qinfo);
+    } else {
+      CreateConstantTensor(op, data_b, input2_name, b_shape, input2_qinfo);
+    }
     decl << input2_name;
   }
 
   /* Emit output tensor */
-  auto output_qinfo = GetCallOPQuant(call, 2);
+  auto output_qinfo = GetCallOPQuant(call, 3);
   string output_name = CreateOutputTensor(op, decl, call, output_qinfo);
   output2params[output_name] = complete_name;
 
@@ -4144,9 +4122,6 @@ void CodegenCSINN::MatMul(const CallNode* call) {
 
   params_common_setup(decl, call, "matmul", params_name, attrs->layer_name.c_str());
   end_stream(decl, "matmul");
-  for (auto iter = free_tensor.begin(); iter != free_tensor.end(); iter++) {
-    FreeTensor(call->args[iter->first], iter->second);
-  }
 }
 
 void CodegenCSINN::CacheMatMul(const CallNode* call) {
@@ -4237,7 +4212,6 @@ void CodegenCSINN::CacheMatMul(const CallNode* call) {
 
   params_common_setup(decl, call, "cache_matmul", params_name, attrs->layer_name.c_str());
   end_stream(decl, "cache_matmul");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::CacheConv1d(const CallNode* call) {
@@ -4314,7 +4288,6 @@ void CodegenCSINN::CacheConv1d(const CallNode* call) {
   PushOutput(output_name, call);
   params_common_setup(decl, call, "cache_conv1d", params_name, attr->layer_name.c_str());
   end_stream(decl, "cache_conv1d");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::LayerNorm(const CallNode* call) {
@@ -4337,7 +4310,8 @@ void CodegenCSINN::LayerNorm(const CallNode* call) {
   string input_name = CreateInputTensor(op, decl, call, 0, GetCallOPQuant(call, 0));
 
   /* Emit output tensor */
-  string output_name = CreateOutputTensor(op, decl, call, GetCallOPQuant(call, 3));
+  auto output_qinfo = GetCallOPQuant(call, 3);
+  string output_name = CreateOutputTensor(op, decl, call, output_qinfo);
 
   collect_quant_info(complete_name, attrs->q_params, 3);
 
@@ -4378,11 +4352,10 @@ void CodegenCSINN::LayerNorm(const CallNode* call) {
   string scale = attrs->scale ? "true" : "false";
   t0 << params_name << "->scale = " << scale;
   func_def_.PushDecl(t0);
-  PushOutput(output_name, call);
+  PushOutput(output_name, call, output_qinfo->dtype);
 
   params_common_setup(decl, call, "layer_norm", params_name, attrs->layer_name.c_str());
   end_stream(decl, "layer_norm");
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::DataConvert(const CallNode* call) {
@@ -4415,7 +4388,6 @@ void CodegenCSINN::DataConvert(const CallNode* call) {
   string op_name = "data_convert";
   params_common_setup(decl, call, op_name, params_name, attr->layer_name.c_str());
   end_stream(decl, op_name);
-  FreeTensor(call->args[0], input_name);
 }
 
 void CodegenCSINN::OneHot(const CallNode* call) {
@@ -4438,7 +4410,6 @@ void CodegenCSINN::OneHot(const CallNode* call) {
 
   params_common_setup(decl, call, "one_hot", params_name, attr->layer_name.c_str());
   end_stream(decl, "one_hot");
-  FreeTensor(call->args[0], siso_input_name);
 }
 
 void CodegenCSINN::Where(const CallNode* call) {
@@ -4453,9 +4424,21 @@ void CodegenCSINN::Where(const CallNode* call) {
   visit(call->args[0]);
   string complete0_name = attr->layer_name.c_str();
   op->set_name(complete0_name);
-
+  buf_idx_++;
   auto input0_qinfo = GetCallOPQuant(call, 0);
-  string input0_name = CreateInputTensor(op, decl, call, 0, input0_qinfo);
+  string input0_name;
+  if (call->args[0].as<ConstantNode>()) {
+    CHECK(constant_.size() == 1) << "Every args expects a single constant_";
+    auto constant_input = constant_[0];
+    input0_name = "where_condition_" + to_string(buf_idx_);
+    auto in_shape0 = call->args[0]->get_shape();
+    CreateConstantTensor(op, constant_input, input0_name, in_shape0, input0_qinfo);
+    decl << input0_name;
+  } else {
+    CHECK(out_.size() == 1) << "Every args expects a single out_";
+    input0_name = CreateInputTensor(op, decl, call, 0, input0_qinfo);
+  }
+
   decl << ", ";
 
   /* Emit input1 tensor */
@@ -4464,7 +4447,18 @@ void CodegenCSINN::Where(const CallNode* call) {
   op->set_name(complete1_name);
 
   auto input1_qinfo = GetCallOPQuant(call, 1);
-  string input1_name = CreateInputTensor(op, decl, call, 1, input1_qinfo);
+  string input1_name;
+  if (call->args[1].as<ConstantNode>()) {
+    CHECK(constant_.size() == 1) << "Every args expects a single constant_";
+    auto constant_input = constant_[0];
+    input1_name = "where_x_" + to_string(buf_idx_);
+    auto in_shape1 = call->args[1]->get_shape();
+    CreateConstantTensor(op, constant_input, input1_name, in_shape1, input1_qinfo);
+    decl << input1_name;
+  } else {
+    CHECK(out_.size() == 1) << "Every args expects a single out_";
+    input1_name = CreateInputTensor(op, decl, call, 1, input1_qinfo);
+  }
   decl << ", ";
 
   /* Emit input2 tensor */
@@ -4473,7 +4467,18 @@ void CodegenCSINN::Where(const CallNode* call) {
   op->set_name(complete2_name);
 
   auto input2_qinfo = GetCallOPQuant(call, 2);
-  string input2_name = CreateInputTensor(op, decl, call, 2, input2_qinfo);
+  string input2_name;
+  if (call->args[2].as<ConstantNode>()) {
+    CHECK(constant_.size() == 1) << "Every args expects a single constant_";
+    auto constant_input = constant_[0];
+    input2_name = "where_y_" + to_string(buf_idx_);
+    auto in_shape2 = call->args[2]->get_shape();
+    CreateConstantTensor(op, constant_input, input2_name, in_shape2, input2_qinfo);
+    decl << input2_name;
+  } else {
+    CHECK(out_.size() == 1) << "Every args expects a single out_";
+    input2_name = CreateInputTensor(op, decl, call, 2, input2_qinfo);
+  }
 
   /* Emit output tensor */
   auto output_qinfo = GetCallOPQuant(call, 3);
@@ -4488,9 +4493,80 @@ void CodegenCSINN::Where(const CallNode* call) {
   string op_name = "where";
   params_common_setup(decl, call, op_name, params_name, attr->layer_name.c_str());
   end_stream(decl, op_name);
-  FreeTensor(call->args[0], input0_name);
-  FreeTensor(call->args[1], input1_name);
-  FreeTensor(call->args[2], input2_name);
+}
+
+void CodegenCSINN::WhereSoftmax(const CallNode* call) {
+  std::ostringstream decl;
+  std::ostringstream t0;
+  CSINNOP* op = new CSINNOP;
+  const auto* attr = call->attrs.as<QnnCSIWhereSoftmaxAttrs>();
+
+  // Make function call with input buffers when visiting arguments
+  decl << "(";
+
+  /* Emit input0 tensor */
+  visit(call->args[0]);
+  string complete0_name = attr->layer_name.c_str();
+  op->set_name(complete0_name);
+  buf_idx_++;
+  auto input0_qinfo = GetCallOPQuant(call, 0);
+  string input0_name;
+  if (call->args[0].as<ConstantNode>()) {
+    CHECK(constant_.size() == 1) << "Every args expects a single constant_";
+    auto constant_input = constant_[0];
+    input0_name = "where_condition_" + to_string(buf_idx_);
+    auto in_shape0 = call->args[0]->get_shape();
+    CreateConstantTensor(op, constant_input, input0_name, in_shape0, input0_qinfo);
+    decl << input0_name;
+  } else {
+    CHECK(out_.size() == 1) << "Every args expects a single out_";
+    input0_name = CreateInputTensor(op, decl, call, 0, input0_qinfo);
+  }
+
+  decl << ", ";
+
+  /* Emit input1 tensor */
+  if (!call->args[1].as<ConstantNode>()) {
+    CHECK(0) << "The first input of where_oftmax must be";
+  }
+
+  /* Emit input2 tensor */
+  visit(call->args[2]);
+  string complete2_name = attr->layer_name.c_str();
+  op->set_name(complete2_name);
+
+  auto input2_qinfo = GetCallOPQuant(call, 2);
+  string input2_name;
+  if (call->args[2].as<ConstantNode>()) {
+    CHECK(constant_.size() == 1) << "Every args expects a single constant_";
+    auto constant_input = constant_[0];
+    input2_name = "where_y_" + to_string(buf_idx_);
+    auto in_shape2 = call->args[2]->get_shape();
+    CreateConstantTensor(op, constant_input, input2_name, in_shape2, input2_qinfo);
+    decl << input2_name;
+  } else {
+    CHECK(out_.size() == 1) << "Every args expects a single out_";
+    input2_name = CreateInputTensor(op, decl, call, 2, input2_qinfo);
+  }
+
+  /* Emit output tensor */
+  auto output_qinfo = GetCallOPQuant(call, 3);
+  string output_name = CreateOutputTensor(op, decl, call, output_qinfo);
+  PushOutput(output_name, call, output_qinfo->dtype);
+
+  push_decl(op);
+  string params_name = "params_" + to_string(buf_idx_);
+  decl << ", " << params_name << ")";
+
+  malloc_params("csinn_where_softmax_params", params_name);
+
+  t0 << params_name << "->minus_inf = -(float)HUGE_VALF";
+  func_def_.PushDecl(t0);
+  t0 << params_name << "->axis = " << to_string(attr->axis);
+  func_def_.PushDecl(t0);
+  string op_name = "where_softmax";
+  params_common_setup(decl, call, op_name, params_name, attr->layer_name.c_str());
+  end_stream(decl, op_name);
 }
 
 }  // namespace csinn

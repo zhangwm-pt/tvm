@@ -38,10 +38,6 @@ class CodegenGref : public CodegenCSINN {
  public:
   virtual string get_ccode(void);
   virtual void EmitNBGSetup(void);
-  void malloc_buf(string out, int out_size) {}
-  void CreateMallocBuf(string name, std::vector<int> shape, string dtype) {}
-  void CreateTensorSessData() {}
-  void FreeTensor(const Expr& expr, string name) {}
 
   void SessionRunMode() { func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_GRAPH;"); }
   // virtual bool IsIntegralOrNot(string const_kind);

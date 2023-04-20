@@ -273,3 +273,20 @@ class DatasetLoader(object):
                 )
                 yield {self.input_name[0]: dataset}
                 self._dp.data_clear()
+
+
+def hhb_preprocess(data_path: str, config, is_generator=False):
+    """Convert data provided by data_path into target input data."""
+    dl = DatasetLoader(
+        data_path,
+        config._cmd_config.preprocess_config,
+        config._cmd_config.input_shape,
+        config._cmd_config.input_name,
+    )
+    res = dl
+    if not is_generator:
+        dataset_list = []
+        for d in dl.get_data():
+            dataset_list.append(d)
+        res = dataset_list
+    return res

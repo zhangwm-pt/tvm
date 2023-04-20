@@ -82,11 +82,14 @@ Expr FromRelay::VisitExpr_(const RelayCallNode* op) {
   }
   auto type = op->checked_type();
   std::vector<int> shape;
+  DataType dtype;
   if (type.as<TensorTypeNode>()) {
     shape = tvm::relay::backend::GetShape(type);
+    dtype = tvm::relay::backend::GetType(type);
   }
   struct HHBExprExtend* extend = new HHBExprExtend();
   extend->shape = shape;
+  extend->dtype = dtype;
   auto ret = Call(op->op, call_args, extend, op->attrs, op->type_args, op->span);
   ret->checked_type_ = op->checked_type_;
   return ret;
@@ -94,12 +97,15 @@ Expr FromRelay::VisitExpr_(const RelayCallNode* op) {
 
 Expr FromRelay::VisitExpr_(const RelayVarNode* op) {
   std::vector<int> shape;
+  DataType dtype;
   auto type = op->checked_type();
   if (type.as<TensorTypeNode>()) {
     shape = tvm::relay::backend::GetShape(type);
+    dtype = tvm::relay::backend::GetType(type);
   }
   struct HHBExprExtend* extend = new HHBExprExtend();
   extend->shape = shape;
+  extend->dtype = dtype;
   auto ret = Var(op->vid, extend, op->type_annotation, op->span);
   ret->checked_type_ = op->checked_type_;
   return ret;
@@ -107,8 +113,10 @@ Expr FromRelay::VisitExpr_(const RelayVarNode* op) {
 
 Expr FromRelay::VisitExpr_(const RelayConstantNode* op) {
   auto shape = tvm::relay::backend::GetShape(op->checked_type());
+  auto dtype = tvm::relay::backend::GetType(op->checked_type());
   struct HHBExprExtend* extend = new HHBExprExtend();
   extend->shape = shape;
+  extend->dtype = dtype;
   auto ret = Constant(op->data, extend, op->span);
   ret->checked_type_ = op->checked_type_;
   return ret;
@@ -128,8 +136,10 @@ Expr FromRelay::VisitExpr_(const RelayTupleNode* op) {
 Expr FromRelay::VisitExpr_(const RelayTupleGetItemNode* get_item) {
   auto new_tuple = VisitRelayExpr(get_item->tuple);
   auto shape = tvm::relay::backend::GetShape(get_item->checked_type());
+  auto dtype = tvm::relay::backend::GetType(get_item->checked_type());
   struct HHBExprExtend* extend = new HHBExprExtend();
   extend->shape = shape;
+  extend->dtype = dtype;
   auto ret = TupleGetItem(new_tuple, get_item->index, get_item->span);
   ret->hhb_expr_extend_ = extend;
   ret->checked_type_ = get_item->checked_type_;

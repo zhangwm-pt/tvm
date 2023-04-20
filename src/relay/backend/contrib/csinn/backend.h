@@ -58,7 +58,7 @@ using RelayTupleGetItemNode = tvm::relay::TupleGetItemNode;
 
 struct HHBExprExtend {
   std::vector<int> shape;
-  std::string dtype;
+  DataType dtype;
   void* target_data;
   std::string name;
   std::vector<std::string> output_names;
@@ -170,6 +170,8 @@ class VarNode : public ExprNode {
 
 class Var : public Expr {
  public:
+  Var(String name_hint, struct HHBExprExtend* extend, Type type_annotation, Span span = Span())
+      : Var(Id(name_hint), extend, type_annotation, span) {}
   Var(Id vid, struct HHBExprExtend* extend, Type type_annotation, Span span = Span());
   TVM_DEFINE_OBJECT_REF_METHODS(Var, Expr, VarNode);
 };
@@ -260,6 +262,51 @@ class CSINNExprFunctor<R(const Expr& n)> {
   virtual R visit_expr_default(const Object* op) {
     LOG(FATAL) << "Do not have a default for " << op->GetTypeKey();
     throw;
+  }
+
+  /*!
+   * \brief Returns dtype string
+   *
+   * \param var Var to get the dtype of
+   *
+   * \return The dtype string.
+   */
+  std::string GetDtypeString(const Var& var) {
+    auto ttype = var->checked_type().as<TensorTypeNode>();
+    ICHECK(ttype) << "Expect TensorTypeNode";
+    return GetDtypeString(ttype);
+  }
+
+  /*!
+   * \brief Returns dtype string
+   *
+   * \param ttype TensorTypeNode* to get the dtype of
+   *
+   * \return The dtype string.
+   */
+  std::string GetDtypeString(const TensorTypeNode* ttype) { return GetDtypeString(ttype->dtype); }
+
+  std::string GetDtypeString(DataType i_dtype) {
+    std::string dtype;
+    if (runtime::TypeMatch(i_dtype, kDLFloat, 32)) {
+      dtype = "float";
+    } else if (runtime::TypeMatch(i_dtype, kDLFloat, 16)) {
+      dtype = "half";
+    } else if (runtime::TypeMatch(i_dtype, kDLInt, 32)) {
+      dtype = "int32_t";
+    } else if (runtime::TypeMatch(i_dtype, kDLInt, 64)) {
+      dtype = "int64_t";
+    } else if (runtime::TypeMatch(i_dtype, kDLInt, 8)) {
+      dtype = "int8_t";
+    } else if (runtime::TypeMatch(i_dtype, kDLUInt, 8)) {
+      dtype = "uint8_t";
+    } else if (runtime::TypeMatch(i_dtype, kDLUInt, 1)) {
+      dtype = "bool";
+    } else {
+      LOG(FATAL) << "Unsupported dtype " << i_dtype;
+    }
+
+    return dtype;
   }
 
  private:

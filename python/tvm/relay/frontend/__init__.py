@@ -35,5 +35,3 @@ from .pytorch import from_pytorch
 from .caffe import from_caffe
 from .paddlepaddle import from_paddle
 from .change_datatype import ChangeDatatype
-from .kaldi_parse import KaldiLoader
-from .kaldi import from_kaldi

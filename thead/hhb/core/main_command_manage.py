@@ -20,6 +20,7 @@ import os
 import numpy as np
 import tvm
 from tvm.contrib import graph_executor
+from tvm.relay.quantize.quantize_hhb import detect_quantized_model
 
 from .arguments_manage import ArgumentFilter
 from .frontend_manage import import_model, insert_preprocess_node
@@ -30,6 +31,7 @@ from .hhbir_manage import (
     HHBFloatCodegenIR,
     HHBX86QnnCodegenIR,
     HHBBoardQnnCodegenIR,
+    HHBBoardBuildRuntime,
     get_input_info_from_relay,
     get_output_info_from_relay,
     reorder_pixel_format,
@@ -47,7 +49,7 @@ from .preprocess_manage import (
     DatasetLoader,
 )
 from .codegen_manage import collect_codegen_config, set_codegen_config
-from .simulate_manage import inference_model
+from .simulate_manage import inference_model, inference_elf
 
 
 LOG = 25
@@ -107,7 +109,7 @@ def driver_main_command(args_filter: ArgumentFilter):
         generate_dataset(args_filter)
         return 0
 
-    if not (args.E or args.Q or args.C or args.simulate):
+    if not (args.E or args.Q or args.C or args.D or args.S or args.simulate):
         raise HHBException("No subcommand select.\n")
 
     #######################################################################
@@ -148,6 +150,29 @@ def driver_main_command(args_filter: ArgumentFilter):
     #
     input_name_list, input_shape_list, _ = get_input_info_from_relay(mod, params)
     output_shape_list, _ = get_output_info_from_relay(mod, params)
+
+    if not args.no_quantize:
+        detected_quant_type = detect_quantized_model(mod)
+        if detected_quant_type:
+            if len(detected_quant_type) == 1:
+                detected_quant_type = detected_quant_type.pop()
+                if detected_quant_type == "uint8":
+                    args.quantization_scheme = "uint8_asym"
+                elif detected_quant_type == "int8":
+                    args.quantization_scheme = "int8_asym"
+                else:
+                    raise HHBException(
+                        "Unsupport quantization type:{}.\n".format(detected_quant_type)
+                    )
+                logger.log(
+                    LOG,
+                    "Detect that current model has been quantized with {}, "
+                    "--quantization-scheme will be overwritten to {}".format(
+                        detected_quant_type, args.quantization_scheme
+                    ),
+                )
+            else:
+                logger.warning("Detect that there are multi quantization types in model.")
     # filter arguments and prepare all needed args
     all_filters = [
         collect_preprocess_config,
@@ -203,15 +228,14 @@ def driver_main_command(args_filter: ArgumentFilter):
     #
     target_board_list = (
         "anole",
-        "light",
-        "hlight",
-        "asp",
-        "i805",
-        "c860",
+        "th1520",
+        "hth1520",
         "e907",
         "c906",
         "rvm",
         "c908",
+        "c920",
+        "x86_ref",
     )
     config_dict = get_config_dict(args)
     if config_dict["auto_hybrid_quantization"]:
@@ -232,8 +256,8 @@ def driver_main_command(args_filter: ArgumentFilter):
                 set(config_dict["hybrid_layer_name"])
                 - set(args.quantize_config.ignore_hybrid_layer)
             )
-    light_input_fix_size = args.codegen_config.light_input_fix_size
-    is_x86 = True
+    th1520_input_fix_size = args.codegen_config.th1520_input_fix_size
+
     if args.board == "x86_ref":
         if args.no_quantize:
             x86_codegen_ir = HHBFloatCodegenIR()
@@ -243,31 +267,38 @@ def driver_main_command(args_filter: ArgumentFilter):
             x86_codegen_ir.convert(
                 qnn_ir.get_model(), args.board, args.opt_level, args.output, config_dict
             )
-    elif args.board in target_board_list:
-        is_x86 = False
-        if args.no_quantize:
+
+    if args.no_quantize:
+        if args.board == "x86_ref":
+            pass
+        else:
             raise HHBException(
                 "can not set '--no-quantize' with '--board {}'.\n".format(args.board)
             )
-        board_codegen_ir = HHBBoardQnnCodegenIR()
-
-        board_codegen_ir.convert(
-            qnn_ir.get_model(),
-            args.board,
-            args.opt_level,
-            args.output,
-            config_dict,
-        )
     else:
-        raise HHBException("unsupport for board: {}.\n".format(args.board))
+        if args.board in target_board_list:
+            board_codegen_ir = HHBBoardQnnCodegenIR()
 
-    if args.C or args.save_temps:
+            board_codegen_ir.convert(
+                qnn_ir.get_model(),
+                args.board,
+                args.opt_level,
+                args.output,
+                config_dict,
+            )
+        else:
+            raise HHBException("unsupport for board: {}.\n".format(args.board))
+
+    if args.C or args.D or args.S or args.save_temps:
         if args.board == "x86_ref":
             x86_codegen_ir.save_model(args.output)
-        elif args.board in target_board_list:
+        if args.board in target_board_list:
             input_name_list, input_shape_list, _ = get_input_info_from_relay(
                 qnn_ir.get_model()[0], None
             )
+            hhb_gen = False
+            if args.ahead_of_time == "intrinsic":
+                hhb_gen = True
             board_codegen_ir.save_model(
                 input_shape_list,
                 output_shape_list,
@@ -281,6 +312,7 @@ def driver_main_command(args_filter: ArgumentFilter):
                 args.codegen_config.input_memory_type,
                 args.quantize_config.quantization_scheme,
                 args.codegen_config,
+                hhb_gen,
             )
 
             # save part data in calibrate dataset into tensor file
@@ -295,14 +327,14 @@ def driver_main_command(args_filter: ArgumentFilter):
                     v = v.transpose([0, 2, 3, 1])
                 v.tofile(os.path.join(args.output, safe_k + ".{}.tensor".format(data_count)), "\n")
                 v.tofile(os.path.join(args.output, safe_k + ".{}.bin".format(data_count)))
-                if len(light_input_fix_size) == 2:
+                if len(th1520_input_fix_size) == 2:
                     v = np.pad(
                         v,
                         (
                             (0, 0),
                             (0, 0),
-                            (0, int(light_input_fix_size[0]) - v.shape[2]),
-                            (0, int(light_input_fix_size[1]) - v.shape[3]),
+                            (0, int(th1520_input_fix_size[0]) - v.shape[2]),
+                            (0, int(th1520_input_fix_size[1]) - v.shape[3]),
                         ),
                         "constant",
                     )
@@ -312,40 +344,77 @@ def driver_main_command(args_filter: ArgumentFilter):
                     )
                     v.tofile(os.path.join(args.output, safe_k + ".{}.pad.bin".format(data_count)))
                 data_count += 1
-        elif args.board in ("i805"):
-            # generate function map
-            board_codegen_ir.save_model(
-                input_shape_list,
-                output_shape_list,
-                args.board,
-                args.output,
-            )
-            # save part data in calibrate dataset into tensor file
-            data_count = 0
-            input_name_list, _, _ = get_input_info_from_relay(qnn_ir.get_model()[0], None)
-            for k in input_name_list:
-                safe_k = k.replace("/", "_")
-                v = dataset_list[0][k]
-                v = v.astype("float32")
-                scale = (v.max() - v.min()) / 255
-                zp = int(0.0 - v.min() / scale)
-                v = v / scale + zp
-                v = v.astype("uint8")
-                if args.target_layout == "NHWC":
-                    v = v.transpose([0, 2, 3, 1])
-                v.tofile(os.path.join(args.output, safe_k + ".{}.tensor".format(data_count)), "\n")
-                v.tofile(os.path.join(args.output, safe_k + ".{}.bin".format(data_count)))
-                data_count += 1
 
     if args.C:
         return 0
 
     #######################################################################
     #
+    # Execute '-D' command, build all source files into one elf
+    #
+
+    if args.D or args.S:
+        intrinsic = False
+        if args.ahead_of_time == "intrinsic":
+            intrinsic = True
+        platform_deploy = HHBBoardBuildRuntime(args.board, args.output, intrinsic)
+
+        # build all c source files to .o
+        platform_deploy.build_c()
+        # link_elf for linux platform
+        platform_deploy.link_elf()
+
+    if args.D:
+        return 0
+
+    #######################################################################
+    #
+    # Execute '-S' command
+    #
+    dl = DatasetLoader(
+        args.simulate_data,
+        args.preprocess_config,
+        input_shape_list,
+        input_name_list,
+        target_layout=args.target_layout,
+    )
+    if args.S:
+        dataset = dl.get_data()
+        all_file_path = dl.all_file_path
+        if args.board == "x86_ref":
+            inference_elf("./hhb_runtime", dataset, input_name_list, all_file_path, args.output)
+        elif args.board == "c906":
+            inference_elf(
+                "qemu-riscv64 -cpu c906fdv hhb_runtime",
+                dataset,
+                input_name_list,
+                all_file_path,
+                args.output,
+            )
+        elif args.board == "c908":
+            inference_elf(
+                "qemu-riscv64 -cpu c908v hhb_runtime",
+                dataset,
+                input_name_list,
+                all_file_path,
+                args.output,
+            )
+        elif args.board == "c920":
+            inference_elf(
+                "qemu-riscv64 -cpu c920 hhb_runtime",
+                dataset,
+                input_name_list,
+                all_file_path,
+                args.output,
+            )
+        else:
+            raise HHBException("Unsupport to simulate for %s.\n", args.board)
+        return 0
+
+    #######################################################################
+    #
     # Execute '--simulate' command
     #
-    if not is_x86:
-        raise HHBException("{} don't support for simulation.\n".format(args.board))
     if not args.simulate_data:
         raise HHBException("Please set simulate data by --simulate-data.\n")
 
@@ -360,11 +429,4 @@ def driver_main_command(args_filter: ArgumentFilter):
         m = tvm.contrib.graph_executor.create(factory.get_graph_json(), lib, tvm.cpu(0))
         m.load_params(tvm.runtime.save_param_dict(factory.get_params()))
 
-    dl = DatasetLoader(
-        args.simulate_data,
-        args.preprocess_config,
-        input_shape_list,
-        input_name_list,
-        target_layout=args.target_layout,
-    )
     inference_model(m, dl, args.postprocess, args.output)

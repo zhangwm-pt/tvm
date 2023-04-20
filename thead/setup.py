@@ -20,12 +20,25 @@
 from setuptools import find_packages
 from setuptools import setup
 
-__version__ = "2.1.x"
+__version__ = "2.2.0"
 
 
 def get_package_data_files():
     # template files
-    return ["config/*", "config/process/include/*", "config/process/src/*", "config/template/*"]
+    return [
+        "config/*",
+        "config/process/include/*",
+        "config/process/src/*",
+        "config/template/*",
+        "prebuilt/runtime/riscv_linux/libprebuilt_runtime.a",
+        "prebuilt/runtime/x86_linux/libprebuilt_runtime.a",
+        "prebuilt/runtime/cmd_parse/cmd_parse.h",
+        "prebuilt/decode/install/lib/rv/*",
+        "3rdparty/dlpack/include/dlpack/dlpack.h",
+        "install_nn2/*",
+        "install_nn2/include/*",
+        "install_nn2/lib/*",
+    ]
 
 
 setup(
